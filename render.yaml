@@ -1,0 +1,25 @@
+# Render Blueprint — deploys the bot as a free web service.
+#
+# The bot keeps long-polling Telegram; the Express /health route exists so
+# Render sees a bound port AND so an external uptime pinger (UptimeRobot /
+# cron-job.org, hitting https://<your-app>.onrender.com/health every ~10 min)
+# keeps the free instance awake. Durable state lives in Neon Postgres
+# (DATABASE_URL), because Render's free disk is wiped on every restart.
+#
+# Set ALL secrets in the Render dashboard (Environment), NOT here:
+#   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, KEY_ENCRYPTION_SECRET,
+#   DATABASE_URL, COINALYZE_API_KEY, BYBIT_*, COINGECKO_API_KEY, etc.
+
+services:
+  - type: web
+    name: tradealertbot
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm install
+    startCommand: node src/index.js
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "20"

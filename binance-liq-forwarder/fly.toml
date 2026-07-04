@@ -1,0 +1,20 @@
+# Fly.io config — Singapore region, always-on (free tier). `app` must be GLOBALLY
+# unique across all of Fly — if `fly apps create` says it's taken, append digits
+# here and re-run.
+app = "tradealert-liq-fwd"
+# Tokyo — Binance's matching engine is on AWS Tokyo, so Binance serves market data
+# to Tokyo IPs. (Singapore is geo-restricted by Binance under MAS rules.)
+primary_region = "nrt"
+
+[build]
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

@@ -1,0 +1,50 @@
+{
+  "_meta": "Free public RPC endpoints with failover. Add more if you find faster ones in your region. First entry is tried first; on failure the monitor rotates to the next.",
+  "ethereum": {
+    "rpcs": [
+      "https://ethereum-rpc.publicnode.com",
+      "https://ethereum.publicnode.com",
+      "https://eth.llamarpc.com",
+      "https://eth.drpc.org",
+      "https://eth-mainnet.public.blastapi.io",
+      "https://rpc.flashbots.net",
+      "https://1rpc.io/eth"
+    ],
+    "pollIntervalMs": 12000,
+    "maxBlocksPerCall": 1000
+  },
+  "bsc": {
+    "rpcs": [
+      "https://bsc-rpc.publicnode.com",
+      "https://bsc.publicnode.com",
+      "https://rpc-bsc.48.club",
+      "https://bsc.drpc.org",
+      "https://binance.llamarpc.com",
+      "https://bnb.rpc.subquery.network/public",
+      "https://bsc-dataseed1.bnbchain.org",
+      "https://bsc-dataseed2.bnbchain.org"
+    ],
+    "pollIntervalMs": 6000,
+    "maxBlocksPerCall": 2000
+  },
+  "base": {
+    "rpcs": [
+      "https://base-rpc.publicnode.com",
+      "https://base.publicnode.com",
+      "https://base.llamarpc.com",
+      "https://base.drpc.org",
+      "https://mainnet.base.org",
+      "https://1rpc.io/base"
+    ],
+    "pollIntervalMs": 6000,
+    "maxBlocksPerCall": 2000
+  },
+  "solana": {
+    "rpcs": [
+      "https://solana-rpc.publicnode.com",
+      "https://api.mainnet-beta.solana.com",
+      "https://rpc.ankr.com/solana"
+    ],
+    "pollIntervalMs": 25000
+  }
+}

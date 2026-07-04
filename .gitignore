@@ -1,0 +1,35 @@
+# Secrets — NEVER commit. This repo may become a public submission.
+.env
+.env.*
+!.env.example
+asp/.env
+asp/.env.*
+!asp/.env.example
+**/.env
+**/*.key
+**/*.pem
+secrets/
+crypto-vault*.json
+
+# Runtime / ephemeral data
+logs/
+*.log
+*.jsonl
+data/
+tmp/
+.cache/
+asp/.cache/
+.onchainos/
+
+# Dependencies / build
+node_modules/
+dist/
+build/
+coverage/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

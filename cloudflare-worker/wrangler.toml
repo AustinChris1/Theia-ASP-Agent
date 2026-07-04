@@ -1,0 +1,8 @@
+# Wrangler config for the Bybit relay Worker.
+# Deploy with:  cd cloudflare-worker && npx wrangler deploy
+# (set the secret first: npx wrangler secret put PROXY_SECRET)
+name = "bybit-relay"
+main = "bybit-proxy.js"
+compatibility_date = "2024-09-01"
+
+# No build step, no bundler — single-file ES module Worker.
