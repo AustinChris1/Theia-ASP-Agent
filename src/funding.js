@@ -46,11 +46,15 @@ const MAX_PLAUSIBLE_FUNDING = 0.05;
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 export class FundingMonitor extends EventEmitter {
-  constructor({ coinalyze, perpSymbolMap, universe, pollIntervalMs = 5 * 60_000, batchSize = 20, cachePath = null }) {
+  constructor({ coinalyze, perpSymbolMap, universe, pollIntervalMs = 5 * 60_000, batchSize = 20, cachePath = null, okx = null, okxSwapMap = null }) {
     super();
     this.coinalyze = coinalyze;
     this.perpSymbolMap = perpSymbolMap;   // TOKEN_SYM → coinalyze perp symbol
     this.universe = universe;
+    // OKX v5 on-demand gap-filler: when the Coinalyze poll misses a token (or its
+    // circuit is open), fetch funding + OI from OKX at analysis time.
+    this.okx = okx;
+    this.okxSwapMap = okxSwapMap;
     this.pollIntervalMs = pollIntervalMs;
     this.batchSize = batchSize;
     this.bySymbol = new Map();             // TOKEN_SYM → { rates, summary }
@@ -127,6 +131,44 @@ export class FundingMonitor extends EventEmitter {
     const info = this.universe.lookupByCgId(cgId);
     if (!info?.symbol) return null;
     return this.bySymbol.get(info.symbol.toUpperCase()) ?? null;
+  }
+
+  // On-demand OKX gap-filler. If the Coinalyze poll already has a FRESH funding
+  // summary for this symbol, keep it; otherwise fetch funding + OI from OKX and
+  // store a summary in the same shape the poll produces. Best-effort; never throws.
+  async ensureBySymbol(symbol, price = null) {
+    const sym = String(symbol || '').toUpperCase();
+    if (!sym || !this.okx) return this.bySymbol.get(sym) ?? null;
+    const existing = this.bySymbol.get(sym);
+    const fresh = existing?.summary && typeof existing.summary.avg === 'number'
+      && Date.now() - (existing.summary.updatedAt ?? 0) < this.pollIntervalMs;
+    if (fresh) return existing;
+
+    const inst = this.okxSwapMap?.get(sym) || `${sym}-USDT-SWAP`;
+    try {
+      const [fr, oi] = await Promise.all([this.okx.getFundingRate(inst), this.okx.getOpenInterest(inst)]);
+      if (!fr && !oi) return existing ?? null;
+      const now = Date.now();
+      const totalOi = (oi?.oiCcy != null && price > 0) ? oi.oiCcy * price : (existing?.summary?.totalOi ?? null);
+      const summary = {
+        avg: fr?.fundingRate ?? existing?.summary?.avg ?? null,
+        min: fr?.fundingRate ?? null,
+        max: fr?.fundingRate ?? null,
+        previousAvg: existing?.summary?.avg ?? null,
+        delta: null,
+        totalOi,
+        previousOi: existing?.summary?.totalOi ?? null,
+        oiDelta: null,
+        oiDeltaPct: null,
+        updatedAt: now,
+        source: 'okx',
+      };
+      const rec = { rates: [{ exchange: inst, rate: summary.avg, oi: totalOi, ts: now }], summary };
+      this.bySymbol.set(sym, rec);
+      return rec;
+    } catch {
+      return existing ?? null;
+    }
   }
 
   // Register a token added at runtime (via /watchlist) so funding/OI cover it

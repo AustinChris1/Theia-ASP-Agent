@@ -1,0 +1,111 @@
+// Fresh ASP config. Reads ONLY the root .env; the x402 wallet lives in the onchainos CLI/TEE, not here.
+import { config as loadEnv } from 'dotenv';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+loadEnv({ path: resolve(__dirname, '.env'), override: false });
+
+const num = (key, dflt) => {
+  const v = process.env[key];
+  if (v === undefined || v === '') return dflt;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : dflt;
+};
+const str = (key, dflt = null) => {
+  const v = process.env[key];
+  return v === undefined || v === '' ? dflt : v;
+};
+const bool = (key, dflt = false) => {
+  const v = process.env[key];
+  if (v === undefined || v === '') return dflt;
+  return v === '1' || v.toLowerCase() === 'true';
+};
+
+// OKX settlement chain for x402 and ERC-8004 identity/escrow.
+export const X_LAYER = {
+  chainId: 196,
+  network: 'eip155:196',
+  name: 'X Layer',
+  rpcUrl: str('X_LAYER_RPC_URL', 'https://rpc.xlayer.tech'),
+};
+
+// Cheap flat pricing ($0.02 to $0.10 USDT) to drive volume.
+export const SKILL_PRICES_USDT = {
+  theia_signal: str('PRICE_SIGNAL', '0.10'),
+  theia_manipulation_check: str('PRICE_MANIPULATION', '0.05'),
+  theia_cex_flow: str('PRICE_CEX_FLOW', '0.05'),
+  theia_insider_scan: str('PRICE_INSIDER', '0.05'),
+  theia_liqmap: str('PRICE_LIQMAP', '0.05'),
+  theia_cex_holdings: str('PRICE_CEX_HOLDINGS', '0.02'),
+};
+
+export const config = {
+  server: {
+    port: num('PORT', 8402),
+    publicUrl: str('ASP_PUBLIC_URL', 'http://localhost:8402'),
+    name: str('ASP_NAME', 'Theia'),
+  },
+
+  x402: {
+    payTo: str('X402_PAY_TO', null),
+    scheme: str('X402_SCHEME', 'exact'),
+    network: X_LAYER.network,
+    chainId: X_LAYER.chainId,
+    // [OPEN] confirm X Layer token addresses via `onchainos wallet chains` before go-live.
+    assets: {
+      USDT: {
+        address: str('X402_ASSET_USDT_ADDRESS', null),
+        decimals: num('X402_ASSET_USDT_DECIMALS', 6),
+        symbol: 'USDT',
+        name: 'Tether USD',
+        eip712Name: str('X402_ASSET_USDT_EIP712_NAME', 'USDT'),
+        eip712Version: str('X402_ASSET_USDT_EIP712_VERSION', '1'),
+      },
+    },
+    defaultAsset: str('X402_DEFAULT_ASSET', 'USDT'),
+    // [OPEN] OKX facilitator base URL for X Layer; confirm via `onchainos agent x402-check`.
+    facilitatorUrl: str('X402_FACILITATOR_URL', null),
+    prices: SKILL_PRICES_USDT,
+    enforce: bool('X402_ENFORCE', false),
+  },
+
+  // Read-only market-data keys (fresh, never the engine's money secrets).
+  engine: {
+    // OKX v5 market data (candles/funding/OI). Blank = direct www.okx.com; set to a
+    // relay base if okx.com is geo-blocked from the host.
+    okxBaseUrl: str('OKX_BASE_URL', null),
+    coinalyzeApiKey: str('COINALYZE_API_KEY', null),
+    coinalyzeApiKeyLiq: str('COINALYZE_API_KEY_LIQ', null),
+    moralisApiKey: str('MORALIS_API_KEY', null),
+    relayBaseUrl: (str('RELAY_BASE_URL') || str('BYBIT_BASE_URL') || '').replace(/\/$/, '') || null,
+    relayAuthSecret: str('BYBIT_PROXY_SECRET', null),
+    universeTopN: num('ASP_UNIVERSE_TOP_N', 300),
+    universeVolumeTopN: num('ASP_UNIVERSE_VOLUME_TOP_N', 200),
+    enableBinanceFutures: bool('ASP_ENABLE_BINANCE_FUTURES', true),
+    enableTeamDiscovery: bool('ASP_ENABLE_TEAM_DISCOVERY', true),
+    teamDiscoveryMaxTokens: num('ASP_TEAM_MAX_TOKENS', 100),
+    verbose: bool('ASP_VERBOSE', false),
+  },
+
+  // Publish REAL resolved outcomes to X Layer. `calldata` = self-send memo; `contract` = append-only log.
+  reputation: {
+    enabled: bool('REPUTATION_LEDGER_ENABLED', false),
+    sink: str('REPUTATION_SINK', 'calldata'),
+    contractAddress: str('REPUTATION_CONTRACT', null),
+    signalsPath: str('REPUTATION_SIGNALS_PATH', resolve(__dirname, 'logs/signals.jsonl')),
+  },
+};
+
+export function activeAsset() {
+  const a = config.x402.assets[config.x402.defaultAsset];
+  if (!a) throw new Error(`Unknown X402_DEFAULT_ASSET: ${config.x402.defaultAsset}`);
+  return a;
+}
+
+export function x402Ready() {
+  const a = config.x402.assets[config.x402.defaultAsset];
+  return Boolean(config.x402.enforce && config.x402.payTo && a?.address);
+}
+
+export default config;

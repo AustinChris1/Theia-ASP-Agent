@@ -1,66 +1,122 @@
-# Trade Alert Bot
+# Theia ASP — an OKX.AI Agent Service Provider
 
-A Node.js (ESM) Telegram bot that fuses **on-chain CEX/insider wallet flows**, **1-minute price surges**, and **perp-market data** (funding, open interest, real-time liquidations, orderbook walls) into a weighted confluence engine. It fires ranked trade signals with full plans — entry, stop-loss, take-profits, leverage, time horizon — and can optionally **auto-trade** them on Bybit (paper or live), per-user. An optional **subscription layer** (`billing/`) gates access with a free trial + on-chain USDT payments.
+Theia is a crypto intelligence engine (in `src/`) exposed as an **Agent Service
+Provider** on OKX.AI. Other agents pay Theia to call:
 
-## Quick start
+- **A2MCP (pay-per-call, x402):** six skills, priced $0.02 to $0.10 in USDT on X
+  Layer, settled instantly per call.
+- **A2A (escrow):** "Theia Deep Desk", a full multi-token audit delivered as a
+  structured report, escrow-backed, released on sign-off.
 
-```bash
-npm install
-cp .env.example .env        # fill TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID (minimum)
-npm start                   # node src/index.js   (npm run dev for --watch)
-node test/sanity.js         # unit suite (223 passing, no live API calls)
+Plus a **verifiable-alpha ledger**: Theia's real resolved-signal win-rate, hashed
+into a Merkle root anchored on X Layer, so the track record is auditable, not
+claimed.
+
+The scoring engine is imported from `src/`, not rebuilt. It is deterministic and
+auditable: an LLM may narrate output but never decides a trade.
+
+## The six A2MCP skills
+
+| Skill | What it returns | Price |
+|---|---|---|
+| `theia_signal` | Confluence side, tier, confidence, scored reasons, full trade plan (entry, SL, TP1-3, R, leverage, horizon) | $0.10 |
+| `theia_manipulation_check` | Pump-and-dump / wash-trade risk 0-100% with flags | $0.05 |
+| `theia_cex_flow` | Direction and materiality of supply into/out of exchange cold custody | $0.05 |
+| `theia_insider_scan` | Largest non-exchange insider holders + top-10 concentration | $0.05 |
+| `theia_liqmap` | Leverage-liquidation clusters above/below price by leverage | $0.05 |
+| `theia_cex_holdings` | Cornered float: cold-wallet concentration by token or exchange | $0.02 |
+
+## Layout
+
+```
+server.js            HTTP host: x402-gated /skills/<name>, MCP /mcp, free /manifest /health /reputation /a2a/quote
+engine.js            headless boot of the intelligence engine (imports src/, no telegram/bot/autotrade)
+config.js            fresh env from .env only
+skills/              thin adapters over the engine, one per A2MCP skill, each schema-validated
+payments/x402.js     seller-side x402 V2 middleware (X Layer, configurable facilitator)
+a2a/deep-desk.js     A2A audit: conviction filter, multi-skill run, report, CLI hooks
+reputation/ledger.js real resolved-outcome win-rate + Merkle root + X Layer anchor
+demo/executor.js     an agent that pays theia_signal via x402 then acts (the demo loop)
+identity/            service manifest + the exact onchainos registration steps
+src/                 the imported intelligence engine (21 files)
+test/                unit suite (no live network)
 ```
 
-Requires Node ≥ 20.
+The engine boots only the subsystems needed for on-demand analysis (universe,
+prices, TA, funding, liquidation heatmap, insider discovery, CEX holdings). Every
+optional subsystem degrades gracefully: a missing data key lowers one skill's
+fidelity, never crashes the server.
 
-## How it works (one signal's life)
+## Setup
 
-1. **Monitors** watch many feeds in parallel — on-chain CEX/insider transfers (ETH/BSC/Solana), 1m price surges, funding/OI, **Bybit liquidations** (real-time), orderbook + liquidation heatmaps, new listings.
-2. The **Conductor** scores confluence across them (the "analyze loose, fire strict" philosophy) and builds a trade plan.
-3. The **SignalTracker** resolves outcomes (progressive TP, breakeven, win/loss stats).
-4. The **Notifier** broadcasts to Telegram; the **AutoTrader** optionally executes on Bybit.
+1. `npm install`
+2. Copy `.env.example` to `.env` and fill it in. Minimum for real reads:
+   - `COINALYZE_API_KEY` (multi-TF TA, funding, liquidation heatmap): coinalyze.net, free tier
+   - `MORALIS_API_KEY` (insider discovery): moralis.io, free tier
+   - `RELAY_BASE_URL` + `BYBIT_PROXY_SECRET` (optional; a relay egress if your host IP is geo-blocked from Binance/Bybit)
+   - For live x402: `X402_PAY_TO`, `X402_ASSET_USDT_ADDRESS`, `X402_FACILITATOR_URL`, `X402_ENFORCE=1`
 
-## What you get
+## Run
 
-- **Signals** — LOW / MEDIUM / HIGH / VERY HIGH tiers with a confluence score, multi-timeframe TA, and an executable trade plan.
-- **Observations** — lighter alerts (flow / liquidation / distribution) below the signal bar.
-- **Progressive TP** — TP1/TP2/TP3 alert as price reaches them; early-breakeven + profit-trail ("bank pops") ratchet the stop so a winner can't bleed back to a loss.
-- **Real liquidation feed** — Bybit `allLiquidation` via a Tokyo forwarder; significance scored by **% of open interest**, not flat $ (a violent cascade can reach signal grade).
-- **Raw insider-sell alerts** — labelled on-chain dumps (amount, USD, network, venue, explorer link).
-- **Multi-user auto-trade** — each user `/connect`s their own Bybit trade-only keys (encrypted); per-user filters + isolated, mode-scoped PnL.
-- **Subscription (optional)** — 7-day free trial → monthly USDT payment to a per-user address (BSC/ETH/Base). Off by default.
+```
+npm start          # boot the engine + start the server (default :8402)
+```
 
-## Key commands
+Then:
+```
+curl localhost:8402/                              # service manifest
+curl localhost:8402/health                        # engine subsystem status
+curl localhost:8402/reputation                    # win-rate scoreboard
+curl -XPOST localhost:8402/skills/theia_signal -H 'content-type: application/json' -d '{"token":"BTC"}'
+curl -XPOST localhost:8402/a2a/quote -H 'content-type: application/json' -d '{"description":"audit BTC and ETH","budgetUsdt":20}'
+```
 
-`/start` `/stop` · `/menu` `/guide` · `/analyze <token>` · `/open` `/pnl` `/recent` `/stats` · `/heatmap` `/liqmap` `/regime` `/movers` `/leaders` · `/autotrade` `/connect` `/subscribe` · operator: `/find` `/insider` `/watchlist` `/subscribers` `/resetstats` `/grant`
+With `X402_ENFORCE=0` (default) the skill endpoints serve free so you can develop
+and demo. With `X402_ENFORCE=1` plus a `payTo` + asset + facilitator, they return a
+402 challenge and require x402 payment.
 
-## Data sources
+### MCP
 
-| Source | Used for |
-|--------|----------|
-| CoinGecko | prices, 24h volume, market caps (spot-only fallback) |
-| Binance Futures (via relay) | primary price feed, funding, deep orderbook heatmap |
-| Bybit (via relay + Tokyo forwarder) | autotrade venue, price match, **real-time liquidations** |
-| Coinalyze | perp OHLCV (TA), open interest (liquidation significance), L/S ratio |
-| Public RPCs (ETH/BSC/Base/Solana) | on-chain CEX & insider transfers; subscription deposits |
-| Moralis | token top-holder discovery (insider wallets) |
+The same six skills are exposed as MCP tools over Streamable HTTP at `POST /mcp`
+(stateless). `initialize` then `tools/list` returns all six.
 
-External calls geo-blocked from the host (Bybit/Binance REST) route through a Singapore relay (`BYBIT_BASE_URL`); the Bybit liquidation WS + Upbit listings route through a Fly **Tokyo forwarder** (`LIQ_FORWARDER_URL`, `UPBIT_PROXY_URL`).
+### Demo executor (agent-to-agent loop)
 
-## Configuration
+```
+npm run demo -- --token BTC                       # dry-run: prints the pay/replay loop
+node demo/executor.js --token SOL --url https://theia-asp.onrender.com --live
+```
 
-`.env.example` is the source of truth (~80 tunables). Most-used: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `COINALYZE_API_KEY`(+`_LIQ`), `MORALIS_API_KEY`, `DATABASE_URL` (Neon — durable state; falls back to JSONL files in `logs/` if unset), `BYBIT_BASE_URL` (relay), `KEY_ENCRYPTION_SECRET` (multi-user keys), `AUTOTRADE` (`off`/`paper`/`live`), `MIN_SIGNAL_SCORE`, `MIN_LIQUIDATION_USD`/`LIQ_OI_PCT`.
+## Tests
 
-> Adding a var to `.env.example` means adding it to the real `.env` too.
+```
+npm test           # ASP adapters + x402 + reputation + A2A + engine functions (no live network)
+```
 
-## Documentation
+## Deploy (Render)
 
-- **[docs/CHANGELOG.md](docs/CHANGELOG.md)** — authoritative current state (read this first).
-- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** · **[docs/SIGNAL_PIPELINE.md](docs/SIGNAL_PIPELINE.md)** · **[docs/TRADE_PLAN.md](docs/TRADE_PLAN.md)** — subsystems, signal flow, trade-plan math.
-- **[billing/README.md](billing/README.md)** — the subscription/payments module (setup + security).
-- **[PRIVACY.md](PRIVACY.md)** — privacy policy (also in-bot via `/privacy`).
-- **[CLAUDE.md](CLAUDE.md)** — guide for working in this codebase.
+The A2MCP endpoint must be a public, permanent `https://` URL before you register
+it on-chain. Deploy this repo as a Render Web Service (see `render.yaml`):
+- Build: `npm install`
+- Start: `npm start`
+- Env: set the `.env` values as Render environment variables (config reads real env
+  vars over the file, so a committed `.env` is not needed on Render).
+- Health check path: `/health`
 
-## Limitations & disclaimer
+Once `GET /health` returns 200 at your Render URL, follow
+[identity/REGISTRATION.md](identity/REGISTRATION.md).
 
-Single Node process; you provide all API keys; no ML/sentiment. **Not financial advice** — signals are probabilistic, crypto is volatile, you trade at your own risk. See "Known gaps" in CHANGELOG §0d.
+## Security
+
+- No secret is read, copied, or committed. `.env`, `logs/`, and key material are
+  gitignored. This repo is treated as a potential public submission.
+- The x402 receiving wallet key lives in the `onchainos` CLI / TEE, never in this
+  code or env.
+- Every external fetch keeps an `AbortSignal.timeout`.
+
+## Ground truth
+
+The OKX integration facts (x402 V2, X Layer 196, A2MCP vs A2A, registration,
+reputation) are documented from the installed `okx/onchainos-skills` package and
+CLI source in [NOTES-okx.md](NOTES-okx.md). Open items (facilitator URL, X Layer
+token addresses) are called out there and are config-driven.

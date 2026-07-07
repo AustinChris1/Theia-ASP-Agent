@@ -22,6 +22,7 @@ import pkg from 'technicalindicators';
 const { RSI, MACD, BollingerBands, ATR, bullish, bearish } = pkg;
 import { analyzeSmc, findSwings } from './smc.js';
 import { TIMEFRAMES, FETCH_INTERVALS, MIN_BARS, aggregateWeekly } from './timeframes.js';
+import { OKX_BAR } from './okx.js';
 
 // Coinalyze TF interval → Bybit kline interval, for the OHLCV FALLBACK: when a token
 // has no Coinalyze perp but DOES trade on Bybit, multi-TF TA still runs off Bybit
@@ -106,9 +107,14 @@ function withSilencedConsole(fn) {
 // per-TF compute code reads `tf.weight` unchanged.
 
 export class TAService {
-  constructor({ coinalyze, perpSymbolMap, cacheTtlMs = 60_000, relayBaseUrl = null, relayAuthSecret = null }) {
+  constructor({ coinalyze, perpSymbolMap, cacheTtlMs = 60_000, relayBaseUrl = null, relayAuthSecret = null, okx = null, okxSwapMap = null }) {
     this.coinalyze = coinalyze;
     this.perpSymbolMap = perpSymbolMap;
+    // OKX v5 candles: on-brand + reachable when Coinalyze rate-limits and Bybit is
+    // geo-blocked. Used as the first candle fallback; needs no relay.
+    this.okx = okx;
+    this.okxSwapMap = okxSwapMap;   // SYMBOL -> OKX USDT-SWAP instId (built at boot)
+    this.okxSymCache = new Map();  // SYMBOL -> instId | null (negative-cached)
     this.cache = new Map();
     this.cacheTtlMs = cacheTtlMs;
     // Bybit is geo-blocked from US hosts (VPS/Render), so the DIRECT Bybit price
@@ -179,10 +185,24 @@ export class TAService {
             history = data?.[0]?.history ?? [];
           } catch { history = []; }
         }
-        // FALLBACK: no Coinalyze perp (or it returned nothing / errored) → Bybit klines, so
-        // multi-TF TA works on any token with a Bybit perp even when Coinalyze
-        // doesn't cover it. Bybit bars are {t(ms),…}; normalise to the Coinalyze
-        // shape (t in seconds, o/h/l/c/v) the TA pipeline expects.
+        // FALLBACK 1: OKX v5 candles (on-brand, reachable direct or via /okx relay).
+        // Runs with NO relay, unlike the Bybit fallback below, so TA still works when
+        // Coinalyze rate-limits on a geo-blocked host. OKX bars already come back as
+        // {t(sec),o,h,l,c,v} ascending, matching the Coinalyze shape.
+        if ((!Array.isArray(history) || history.length === 0) && this.okx) {
+          const bar = OKX_BAR[tf.interval];
+          if (bar) {
+            const inst = this.#okxInstId(symbol);
+            let bars = await this.okx.getCandles(inst, bar, 300);
+            // Spot fallback for tokens with no OKX perp.
+            if ((!bars || !bars.length) && !inst.endsWith('-USDT')) {
+              bars = await this.okx.getCandles(`${String(symbol).toUpperCase()}-USDT`, bar, 300);
+            }
+            if (bars && bars.length) history = bars;
+          }
+        }
+        // FALLBACK 2: no Coinalyze/OKX → Bybit klines (relay only, geo-blocked host).
+        // Bybit bars are {t(ms),…}; normalise to the Coinalyze shape.
         if (!Array.isArray(history) || history.length === 0) {
           const bi = BYBIT_KLINE_INTERVAL[tf.interval];
           if (bi && this.relayBaseUrl) {
@@ -351,6 +371,17 @@ export class TAService {
       console.warn(`[ta] getRecentBars ${sym} failed: ${err.message}`);
       return null;
     }
+  }
+
+  // Resolve a base symbol to an OKX USDT-SWAP instId: the boot-built map first,
+  // else the standard BASE-USDT-SWAP form. Cached per symbol.
+  #okxInstId(symbol) {
+    const sym = String(symbol || '').toUpperCase();
+    if (!sym) return `${sym}-USDT-SWAP`;
+    if (this.okxSymCache.has(sym)) return this.okxSymCache.get(sym);
+    const inst = this.okxSwapMap?.get(sym) || `${sym}-USDT-SWAP`;
+    this.okxSymCache.set(sym, inst);
+    return inst;
   }
 
   // Bybit linear 1m klines between unix-second timestamps. Routes via the relay

@@ -1,25 +1,37 @@
-# Render Blueprint — deploys the bot as a free web service.
-#
-# The bot keeps long-polling Telegram; the Express /health route exists so
-# Render sees a bound port AND so an external uptime pinger (UptimeRobot /
-# cron-job.org, hitting https://<your-app>.onrender.com/health every ~10 min)
-# keeps the free instance awake. Durable state lives in Neon Postgres
-# (DATABASE_URL), because Render's free disk is wiped on every restart.
-#
-# Set ALL secrets in the Render dashboard (Environment), NOT here:
-#   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, KEY_ENCRYPTION_SECRET,
-#   DATABASE_URL, COINALYZE_API_KEY, BYBIT_*, COINGECKO_API_KEY, etc.
-
+# Render Blueprint for the Theia ASP. Set all secrets in the Render dashboard
+# (Environment), never here. Full list is in .env.example.
 services:
   - type: web
-    name: tradealertbot
+    name: theia-asp
     runtime: node
-    plan: free
+    plan: starter
     region: oregon
     buildCommand: npm install
-    startCommand: node src/index.js
+    startCommand: node server.js
     healthCheckPath: /health
     autoDeploy: true
     envVars:
       - key: NODE_VERSION
         value: "20"
+      # Public HTTPS URL of this service (permanent on-chain once registered).
+      - key: ASP_PUBLIC_URL
+        sync: false
+      # Market-data keys for real reads (fresh, ASP-only).
+      - key: COINALYZE_API_KEY
+        sync: false
+      - key: MORALIS_API_KEY
+        sync: false
+      # Optional Singapore relay for geo-blocked Binance/Bybit data.
+      - key: RELAY_BASE_URL
+        sync: false
+      - key: BYBIT_PROXY_SECRET
+        sync: false
+      # x402 settlement (keep 0 until payTo + asset + facilitator are set).
+      - key: X402_ENFORCE
+        value: "0"
+      - key: X402_PAY_TO
+        sync: false
+      - key: X402_ASSET_USDT_ADDRESS
+        sync: false
+      - key: X402_FACILITATOR_URL
+        sync: false

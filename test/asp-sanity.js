@@ -21,11 +21,11 @@ function ok(cond, msg) {
 function eq(a, b, msg) { ok(JSON.stringify(a) === JSON.stringify(b), `${msg} (got ${JSON.stringify(a)})`); }
 
 // ── Dynamic imports after env is set ─────────────────────────────────────────
-const { config, x402Ready } = await import('../asp/config.js');
-const { SKILLS, SKILLS_BY_NAME, skillManifest } = await import('../asp/skills/index.js');
-const x402 = await import('../asp/payments/x402.js');
-const ledger = await import('../asp/reputation/ledger.js');
-const deepDesk = await import('../asp/a2a/deep-desk.js');
+const { config, x402Ready } = await import('../config.js');
+const { SKILLS, SKILLS_BY_NAME, skillManifest } = await import('../skills/index.js');
+const x402 = await import('../payments/x402.js');
+const ledger = await import('../reputation/ledger.js');
+const deepDesk = await import('../a2a/deep-desk.js');
 
 // ── Mock engine (no network) ─────────────────────────────────────────────────
 const BTC = { symbol: 'BTC', name: 'Bitcoin', coingeckoId: 'bitcoin', marketCap: 1.2e12, circulatingSupply: 19e6, totalSupply: 21e6, chains: {} };
@@ -301,6 +301,85 @@ group('a2a deep desk');
 
   ok(deepDesk.cli.canDeliver(1) === true && deepDesk.cli.canDeliver(0) === false, 'canDeliver gated on ACCEPTED(1)');
   ok(deepDesk.cli.deliver('task-1', '/x/r.md', '963').includes('onchainos agent deliver'), 'deliver cli command');
+}
+
+// ── Engine pure-function regression (functions the ASP depends on) ────────────
+group('engine functions');
+{
+  const { assessManipulation, assessPumpRegime, enforceTpLadder } = await import('../src/conductor.js');
+  const clean = assessManipulation({ futuresVol: 1, spotVol: 1, volume: 1, marketCap: 1e9, floatPct: 0.9, concentrationPct: 10 });
+  ok(clean.score === 0 && Array.isArray(clean.flags), 'assessManipulation clean token scores 0');
+  const dirty = assessManipulation({ futuresVol: 10, spotVol: 1, volume: 2e6, marketCap: 1e6, floatPct: 0.1, concentrationPct: 80 });
+  ok(dirty.score > 0.5 && dirty.flags.length >= 3, 'assessManipulation stacks legs on a manipulated token');
+  const regime = assessPumpRegime({ manipFlags: dirty.flags }, 3);
+  ok(typeof regime.isRegime === 'boolean' && Array.isArray(regime.legs), 'assessPumpRegime returns legs + verdict');
+  const ladder = enforceTpLadder('LONG', 100, {}, { tp1: 102, tp2: 101, tp3: 104 });
+  ok(ladder.tp1 <= ladder.tp2 && ladder.tp2 <= ladder.tp3, 'enforceTpLadder orders a LONG ladder ascending');
+}
+
+// ── OKX v5 client (mocked fetch; no live calls) ───────────────────────────────
+group('okx client');
+{
+  const { OkxClient, OKX_BAR } = await import('../src/okx.js');
+  const origFetch = global.fetch;
+  const body = (data) => ({ ok: true, json: async () => ({ code: '0', data }) });
+  global.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes('/market/candles')) return body([
+      ['1700000600000', '10', '12', '9', '11', '100', 'x', 'x', '1'],
+      ['1700000000000', '9', '11', '8', '10', '90', 'x', 'x', '1'],
+    ]);
+    if (u.includes('/public/funding-rate')) return body([{ instId: 'BTC-USDT-SWAP', fundingRate: '0.0001', nextFundingTime: '1700003600000' }]);
+    if (u.includes('/public/open-interest')) return body([{ instId: 'BTC-USDT-SWAP', oi: '1000', oiCcy: '50', ts: '1700000000000' }]);
+    if (u.includes('/public/instruments')) return body([
+      { instId: 'BTC-USDT-SWAP', settleCcy: 'USDT', ctType: 'linear', ctValCcy: 'BTC' },
+      { instId: 'ETH-USD-SWAP', settleCcy: 'ETH', ctType: 'inverse', ctValCcy: 'ETH' },
+    ]);
+    return { ok: false, json: async () => ({}) };
+  };
+
+  const okx = new OkxClient({});
+  const candles = await okx.getCandles('BTC-USDT-SWAP', '1H', 300);
+  ok(candles.length === 2 && candles[0].t < candles[1].t, 'candles reversed to ascending by time');
+  ok(candles[0].t === 1700000000 && candles[0].c === 10, 'candle ms->sec + OHLC parsed');
+  const fr = await okx.getFundingRate('BTC-USDT-SWAP');
+  ok(fr.fundingRate === 0.0001 && typeof fr.fundingRate === 'number', 'funding rate parsed as number');
+  const oi = await okx.getOpenInterest('BTC-USDT-SWAP');
+  ok(oi.oiCcy === 50, 'open interest oiCcy parsed');
+  const map = await okx.buildSwapMap();
+  ok(map.get('BTC') === 'BTC-USDT-SWAP' && !map.has('ETH'), 'swap map keeps USDT-linear only');
+  ok(OKX_BAR['1hour'] === '1H' && OKX_BAR['daily'] === '1D' && OKX_BAR['5min'] === '5m', 'OKX_BAR interval mapping');
+
+  ok(new OkxClient({}).base === 'https://www.okx.com', 'default base = okx.com direct');
+  const relay = new OkxClient({ relayBaseUrl: 'https://r.dev', relayAuthSecret: 's' });
+  ok(relay.base === 'https://r.dev/okx' && relay.auth === 's', 'relay base = /okx prefix with auth');
+  ok(new OkxClient({ baseUrl: 'https://custom.okx' }).base === 'https://custom.okx', 'OKX_BASE_URL override wins');
+
+  global.fetch = async () => ({ ok: true, json: async () => ({ code: '50011', msg: 'rate limit', data: [] }) });
+  ok((await new OkxClient({}).getCandles('BTC-USDT-SWAP', '1H', 1)) === null, 'OKX code != 0 returns null');
+  global.fetch = origFetch;
+}
+
+// ── FundingMonitor OKX gap-filler (mocked; no live calls) ─────────────────────
+group('funding okx gap-filler');
+{
+  const { FundingMonitor } = await import('../src/funding.js');
+  const mockOkx = {
+    getFundingRate: async (inst) => ({ instId: inst, fundingRate: 0.0002, nextFundingTime: 1 }),
+    getOpenInterest: async (inst) => ({ instId: inst, oi: 1000, oiCcy: 50, ts: 1 }),
+  };
+  const fm = new FundingMonitor({
+    coinalyze: null, perpSymbolMap: new Map(), universe: { lookupByCgId: () => null },
+    okx: mockOkx, okxSwapMap: new Map([['BTC', 'BTC-USDT-SWAP']]),
+  });
+  const rec = await fm.ensureBySymbol('BTC', 60000);
+  ok(rec.summary.avg === 0.0002 && rec.summary.source === 'okx', 'okx funding rate populated + tagged');
+  ok(rec.summary.totalOi === 50 * 60000, 'okx OI notional = oiCcy * price');
+  ok(rec.summary.oiDeltaPct === null, 'first okx read has null oi delta (no false OI score)');
+  ok((await fm.ensureBySymbol('BTC', 60000)) === rec, 'fresh funding not re-fetched');
+
+  const fm2 = new FundingMonitor({ coinalyze: null, perpSymbolMap: new Map(), universe: {}, okx: null });
+  ok((await fm2.ensureBySymbol('ETH')) === null, 'no okx client returns null gracefully');
 }
 
 // ── Report ───────────────────────────────────────────────────────────────────

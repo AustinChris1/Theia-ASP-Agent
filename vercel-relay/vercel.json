@@ -1,6 +1,0 @@
-{
-  "regions": ["sin1"],
-  "rewrites": [
-    { "source": "/relay/(.*)", "destination": "/api/proxy" }
-  ]
-}
