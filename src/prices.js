@@ -10,35 +10,28 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 // Universe-aware price monitor.
 //
-// PRIMARY (when a Singapore relay is configured): Bybit linear perps
-// `/v5/market/tickers?category=linear` returns last price + 24h% + 24h turnover
-// for ALL perps in ONE call. This is the SAME venue the bot trades and prices
-// live on (getLastPerpPrice), so surge/movers/getPrice can never disagree with
-// the entry/SL/TP price the user actually sees (the $H bug). Polled every
-// `pollIntervalMs`, it's well inside Bybit's rate limits, free and unmetered.
+// PRIMARY: OKX USDT-SWAP tickers `/market/tickers?instType=SWAP` return last
+// price + 24h% + 24h turnover for ALL perps in ONE call. Same venue as
+// getLastPerpPrice, so surge/movers/getPrice never disagree with the entry/SL/TP.
 //
-// FALLBACK / SPOT-ONLY: CoinGecko `/coins/markets` covers the tokens Bybit
-// doesn't list (low-cap spot-only names — which can't fire full signals anyway,
-// they only need a price for flow USD-sizing). It runs on a SLOW cadence (every
-// `cgEveryN` ticks ≈ 15min) for just those tokens, so a single free Demo key
-// lasts indefinitely instead of being exhausted by a full all-universe poll. If
-// the relay is absent or Bybit fails, CoinGecko transparently covers the FULL
-// universe every tick — zero behavioural regression.
+// FALLBACK / SPOT-ONLY: CoinGecko `/coins/markets` covers the tokens OKX doesn't
+// list. It runs on a SLOW cadence (every `cgEveryN` ticks) for just those tokens,
+// so a single free Demo key lasts. If OKX is disabled/unreachable, CoinGecko
+// transparently covers the FULL universe every tick.
 //
 // (Universe MC / FDV / circulating-supply still come from universe.js on a 7-day
 // cadence — the ticker feed doesn't provide those.)
 export class PriceMonitor extends EventEmitter {
   constructor({ universe, surgePct = 3, pollIntervalMs = 60_000, minVolumeUsd = 500_000,
-                relayBaseUrl = null, relayAuthSecret = null, cgEveryN = 15 }) {
+                okx = null, cgEveryN = 15 }) {
     super();
     this.universe = universe;
     this.surgePct = surgePct;
     this.pollIntervalMs = pollIntervalMs;
     this.minVolumeUsd = minVolumeUsd;
-    // Binance-via-relay price source (same relay used for Bybit + Binance funding).
-    this.relayBaseUrl = relayBaseUrl ? relayBaseUrl.replace(/\/$/, '') : null;
-    this.relayAuthSecret = relayAuthSecret || null;
-    this.cgEveryN = Math.max(1, cgEveryN);   // run CoinGecko every Nth tick when Binance is active
+    // OKX SWAP tickers are the fast price/volume feed (on-brand, one call for all perps).
+    this.okx = okx;
+    this.cgEveryN = Math.max(1, cgEveryN);   // run CoinGecko every Nth tick when OKX is active
 
     this.lastPrice = new Map();   // cgId → price
     this.volume24h = new Map();   // cgId → 24h USD volume (combined — Bybit perp OR CoinGecko)
@@ -48,7 +41,7 @@ export class PriceMonitor extends EventEmitter {
     this.history = new Map();     // cgId → [{ price, ts }]
     this.intervalId = null;
     this._tick = 0;
-    this.binanceCovered = new Set();   // cgIds priced by Binance on the latest tick
+    this.okxCovered = new Set();   // cgIds priced by OKX on the latest tick
 
     // ── Futures VOLUME-SPIKE trigger (opt-in) — the "futures volume +1300%" scam-pump
     // tell. Fire a both-sides eval when a token's perp 24h turnover jumps ≥ MULT × its
@@ -124,8 +117,8 @@ export class PriceMonitor extends EventEmitter {
 
   async start() {
     const ids = this.universe.allCgIds();
-    const mode = this.relayBaseUrl
-      ? `Bybit tickers (relay, every ${this.pollIntervalMs/1000}s) + CoinGecko spot-only (every ${this.cgEveryN * this.pollIntervalMs/60000}min)`
+    const mode = this.okx
+      ? `OKX SWAP tickers (every ${this.pollIntervalMs/1000}s) + CoinGecko spot-only (every ${this.cgEveryN * this.pollIntervalMs/60000}min)`
       : `CoinGecko /coins/markets every ${this.pollIntervalMs/1000}s`;
     console.log(`[prices] price feed: ${mode} for ${ids.length} tokens`);
     await this.#poll();
@@ -134,38 +127,15 @@ export class PriceMonitor extends EventEmitter {
     }, this.pollIntervalMs);
   }
 
-  // Fetch Bybit linear-perp tickers (ALL USDT-perps, one call) via the relay.
-  // Bybit is the venue the bot trades + prices live (getLastPerpPrice), so the
-  // surge/movers/getPrice feed MUST come from the same place — otherwise movers
-  // showed one exchange's "H" while the trade lived on Bybit's "H" (wildly
-  // different prices). Returns Map<TOKEN_SYMBOL, { price, pct, vol }> or null.
-  async #fetchBybitTickers() {
-    if (!this.relayBaseUrl) return null;
-    const path = `/v5/market/tickers?category=linear`;
-    const url = this.relayBaseUrl ? `${this.relayBaseUrl}${path}` : `https://api.bybit.com${path}`;
-    const opts = { signal: AbortSignal.timeout(20_000) };
-    if (this.relayAuthSecret) opts.headers = { 'X-Proxy-Auth': this.relayAuthSecret };
+  // Fetch ALL OKX USDT-SWAP tickers in one call (on-brand fast feed). OKX is the
+  // venue getLastPerpPrice reads, so the surge/movers/getPrice feed comes from the
+  // same place. Returns Map<TOKEN_SYMBOL, { price, pct, vol }> or null.
+  async #fetchOkxTickers() {
+    if (!this.okx) return null;
     try {
-      const res = await fetch(url, opts);
-      if (!res.ok) return null;
-      const j = await res.json();
-      const list = j?.result?.list;
-      if (!Array.isArray(list)) return null;   // relay/error object → null
-      const out = new Map();
-      for (const t of list) {
-        const s = t.symbol;
-        // Linear USDT perps only — skip USDC-margined (…PERP) + odd symbols.
-        if (typeof s !== 'string' || !/^[A-Z0-9]+USDT$/.test(s)) continue;
-        const base = s.slice(0, -4).toUpperCase();
-        const price = Number(t.lastPrice);
-        if (!isFinite(price) || price <= 0) continue;
-        const pct = Number(t.price24hPcnt) * 100;   // Bybit gives a fraction ("0.05" = 5%)
-        const vol = Number(t.turnover24h);          // 24h turnover ≈ USD volume
-        out.set(base, { price, pct: isFinite(pct) ? pct : null, vol: isFinite(vol) ? vol : null });
-      }
-      return out.size > 0 ? out : null;
+      return await this.okx.getSwapTickers();
     } catch (err) {
-      console.warn(`[prices] Bybit tickers via relay failed: ${err.message}`);
+      console.warn(`[prices] OKX tickers failed: ${err.message}`);
       return null;
     }
   }
@@ -174,17 +144,15 @@ export class PriceMonitor extends EventEmitter {
     this._tick++;
     const now = Date.now();
 
-    // 1. Bybit fast feed (perp tokens) — one relay call covers all linear perps.
+    // 1. OKX fast feed (perp tokens) — one call covers all USDT-SWAP tickers.
     const covered = new Set();
-    if (this.relayBaseUrl) {
-      const bn = await this.#fetchBybitTickers();
+    if (this.okx) {
+      const bn = await this.#fetchOkxTickers();
       if (bn) {
         for (const cgId of this.universe.allCgIds()) {
           const sym = this.universe.lookupByCgId(cgId)?.symbol?.toUpperCase();
-          // EXACT symbol match only. Bybit prices some memes per-1000
-          // ("1000PEPEUSDT") which won't match "PEPE" — we deliberately let
-          // those fall through to CoinGecko rather than risk a 1000×-scaled
-          // price on a live trade. Most tokens match directly.
+          // EXACT base-symbol match only (BTC -> BTC-USDT-SWAP). Tokens with no OKX
+          // perp fall through to CoinGecko below.
           const t = sym ? bn.get(sym) : null;
           if (!t) continue;
           covered.add(cgId);
@@ -192,21 +160,21 @@ export class PriceMonitor extends EventEmitter {
           if (t.pct != null) this.priceChange24h.set(cgId, t.pct);
           this.#applyPrice(cgId, t.price, now);
         }
-        this.binanceCovered = covered;
+        this.okxCovered = covered;
         this.#checkVolumeSpikes(now, covered);   // perp turnover-spike sweep on the fresh readings
       }
     }
 
-    // 2. CoinGecko — covers the tokens Binance can't. Full universe when Binance
-    //    is inactive (relay off / fetch failed); otherwise just the UNCOVERED
+    // 2. CoinGecko — covers the tokens OKX can't. Full universe when OKX is
+    //    inactive (relay off / fetch failed); otherwise just the UNCOVERED
     //    (spot-only) tokens on a slow cadence to preserve the free-tier quota.
-    const binanceActive = covered.size > 0;
+    const okxActive = covered.size > 0;
     // Run CoinGecko on the FIRST tick and every cgEveryN ticks thereafter.
     // ((tick-1) % N === 0) is correct for all N including 1 (% N === 1 would
     // never fire for N=1).
-    const cgDue = !binanceActive || ((this._tick - 1) % this.cgEveryN === 0);
+    const cgDue = !okxActive || ((this._tick - 1) % this.cgEveryN === 0);
     if (cgDue) {
-      const targetIds = binanceActive
+      const targetIds = okxActive
         ? this.universe.allCgIds().filter(id => !covered.has(id))
         : this.universe.allCgIds();
       await this.#pollCoinGecko(targetIds, now);

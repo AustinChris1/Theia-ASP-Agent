@@ -7,7 +7,6 @@ import { dirname, resolve } from 'node:path';
 import { Universe } from './src/universe.js';
 import { PriceMonitor } from './src/prices.js';
 import { FundingMonitor } from './src/funding.js';
-import { BinanceFuturesMonitor } from './src/binance-futures.js';
 import { CoinalyzeClient, buildPerpSymbolMap } from './src/coinalyze.js';
 import { TAService } from './src/ta.js';
 import { LiquidationHeatmap } from './src/liquidation-heatmap.js';
@@ -60,31 +59,38 @@ async function _boot() {
   status.universe = true;
   log(`universe built (top ${ec.universeTopN}, ${pinned.length} pinned)`);
 
-  // Prices (required): PriceMonitor.getPrice is dereferenced unguarded in the engine.
+  // OKX v5 client: the primary exchange source (prices, funding, OI, candles,
+  // orderbook). Reachable direct or via the /okx relay. Disable with
+  // ASP_ENABLE_OKX_MARKET_DATA=0 where okx.com is fully blocked and no relay is set.
+  const okx = ec.enableOkxMarketData
+    ? new OkxClient({ baseUrl: ec.okxBaseUrl, relayBaseUrl: ec.relayBaseUrl, relayAuthSecret: ec.relayAuthSecret })
+    : null;
+
+  // Prices (required): OKX SWAP tickers as the fast feed, CoinGecko for the rest.
   const prices = new PriceMonitor({
     universe,
     surgePct: 100,
     pollIntervalMs: Number(process.env.PRICE_POLL_INTERVAL_MS ?? 60_000),
     minVolumeUsd: Number(process.env.MIN_24H_VOLUME_USD ?? 500_000),
-    relayBaseUrl: ec.relayBaseUrl,
-    relayAuthSecret: ec.relayAuthSecret,
+    okx,
     cgEveryN: Number(process.env.PRICE_CG_EVERY_N ?? 15),
   });
   await prices.start();
   status.prices = true;
   log('prices started');
 
-  // OKX v5 client: on-brand candle/funding/OI source, reachable direct or via the
-  // /okx relay. Built always (no key needed) so TA has a source when Coinalyze
-  // rate-limits and Bybit is geo-blocked.
-  const okx = new OkxClient({ baseUrl: ec.okxBaseUrl, relayBaseUrl: ec.relayBaseUrl, relayAuthSecret: ec.relayAuthSecret });
   let okxSwapMap = new Map();
-  try {
-    okxSwapMap = await okx.buildSwapMap();
-    log(`okx: ${okxSwapMap.size} USDT-SWAP instruments mapped`);
-    status.okx = okxSwapMap.size > 0;
-  } catch (err) {
-    warn(`okx instrument map failed (${err.message}); TA uses BASE-USDT-SWAP fallback`);
+  if (okx) {
+    try {
+      okxSwapMap = await okx.buildSwapMap();
+      log(`okx: ${okxSwapMap.size} USDT-SWAP instruments mapped`);
+      status.okx = okxSwapMap.size > 0;
+    } catch (err) {
+      warn(`okx instrument map failed (${err.message}); TA uses BASE-USDT-SWAP fallback`);
+    }
+  } else {
+    status.okx = false;
+    log('okx market data disabled (ASP_ENABLE_OKX_MARKET_DATA=0)');
   }
 
   let funding = null;
@@ -92,26 +98,11 @@ async function _boot() {
   let liquidationHeatmap = null;
   let sharedCoinalyze = null;
 
-  // Funding: prefer Binance Futures (free, no key) when reachable.
-  if (ec.enableBinanceFutures) {
-    try {
-      const binance = new BinanceFuturesMonitor({
-        universe,
-        pollIntervalMs: Number(process.env.FUNDING_POLL_INTERVAL_MS ?? 5 * 60_000),
-        relayBaseUrl: ec.relayBaseUrl,
-        relayAuthSecret: ec.relayAuthSecret,
-      });
-      if (await binance.probe()) {
-        funding = binance;
-        status.funding = 'binance';
-        await funding.start();
-        log('funding via Binance Futures');
-        await sleep(1_500);
-      }
-    } catch (err) { warn(`Binance Futures probe failed: ${err.message}`); }
-  }
+  // Funding/OI is OKX-first: the Coinalyze poll (neutral aggregator) is the cache
+  // fallback, and the OKX on-demand gap-filler is primary per analyzed token.
+  // OKX is the only exchange source.
 
-  // Coinalyze -> TA / funding fallback / liquidation heatmap.
+  // Coinalyze -> TA / funding cache / liquidation heatmap.
   if (ec.coinalyzeApiKey) {
     try {
       sharedCoinalyze = new CoinalyzeClient({
@@ -132,7 +123,7 @@ async function _boot() {
           })
         : sharedCoinalyze;
 
-      // Empty perp map still lets TA fall back to Bybit klines; retry in the background.
+      // Empty perp map still lets TA fall back to OKX candles; retry in the background.
       const perpMap = new Map();
       const topN = Number(process.env.ASP_PERP_TOP_N ?? 200);
       try {
@@ -140,7 +131,7 @@ async function _boot() {
         for (const [k, v] of m) perpMap.set(k, v);
         log(`coinalyze mapped ${perpMap.size} perps`);
       } catch (err) {
-        warn(`perp-map build failed (${err.message}); TA falls back to Bybit klines. Retrying in 10min.`);
+        warn(`perp-map build failed (${err.message}); TA falls back to OKX candles. Retrying in 10min.`);
         const retry = setInterval(() => {
           buildPerpSymbolMap(sharedCoinalyze, universe, topN)
             .then((m) => { if (m.size) { for (const [k, v] of m) perpMap.set(k, v); clearInterval(retry); log(`perp map recovered (${m.size})`); } })
@@ -152,13 +143,13 @@ async function _boot() {
       taService = new TAService({
         coinalyze: sharedCoinalyze,
         perpSymbolMap: perpMap,
-        relayBaseUrl: ec.relayBaseUrl,
-        relayAuthSecret: ec.relayAuthSecret,
         okx,
         okxSwapMap,
       });
       status.ta = true;
-      log('TA enabled (Coinalyze OHLCV, OKX candles fallback, Bybit klines last)');
+      log(okx
+        ? 'TA enabled (Coinalyze OHLCV + OKX candles fallback)'
+        : 'TA enabled (Coinalyze OHLCV only; OKX disabled)');
 
       if (!funding) {
         funding = new FundingMonitor({
@@ -200,8 +191,7 @@ async function _boot() {
       liquidityClusters = new LiquidityClusters({
         perpSymbolMap: taService.perpSymbolMap,
         verbose: ec.verbose,
-        relayBaseUrl: ec.relayBaseUrl,
-        relayAuthSecret: ec.relayAuthSecret,
+        okx,
       });
       status.clusters = true;
       liquidityClusters.selfTest?.().catch(() => {});

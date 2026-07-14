@@ -24,10 +24,6 @@ import { analyzeSmc, findSwings } from './smc.js';
 import { TIMEFRAMES, FETCH_INTERVALS, MIN_BARS, aggregateWeekly } from './timeframes.js';
 import { OKX_BAR } from './okx.js';
 
-// Coinalyze TF interval → Bybit kline interval, for the OHLCV FALLBACK: when a token
-// has no Coinalyze perp but DOES trade on Bybit, multi-TF TA still runs off Bybit
-// klines (the "/analyze AT — no coverage" gap). Weekly is derived from daily, not fetched.
-const BYBIT_KLINE_INTERVAL = { '1min': '1', '5min': '5', '15min': '15', '30min': '30', '1hour': '60', '4hour': '240', 'daily': 'D' };
 
 // Multiplier applied to the RSI-AGAINST penalty when the same TF is trending
 // WITH the trade (overbought-in-uptrend = continuation, not exhaustion). 0.4 =
@@ -107,23 +103,16 @@ function withSilencedConsole(fn) {
 // per-TF compute code reads `tf.weight` unchanged.
 
 export class TAService {
-  constructor({ coinalyze, perpSymbolMap, cacheTtlMs = 60_000, relayBaseUrl = null, relayAuthSecret = null, okx = null, okxSwapMap = null }) {
+  constructor({ coinalyze, perpSymbolMap, cacheTtlMs = 60_000, okx = null, okxSwapMap = null }) {
     this.coinalyze = coinalyze;
     this.perpSymbolMap = perpSymbolMap;
-    // OKX v5 candles: on-brand + reachable when Coinalyze rate-limits and Bybit is
-    // geo-blocked. Used as the first candle fallback; needs no relay.
+    // OKX v5 is the exchange source for candles + live perp price (primary when
+    // Coinalyze rate-limits). Reachable direct or via the /okx relay.
     this.okx = okx;
     this.okxSwapMap = okxSwapMap;   // SYMBOL -> OKX USDT-SWAP instId (built at boot)
     this.okxSymCache = new Map();  // SYMBOL -> instId | null (negative-cached)
     this.cache = new Map();
     this.cacheTtlMs = cacheTtlMs;
-    // Bybit is geo-blocked from US hosts (VPS/Render), so the DIRECT Bybit price
-    // call below silently fails there and falls back to OKX — whose perp price
-    // differs ~1% from Bybit on illiquid alts (the 0.0296-vs-0.0299 mismatch).
-    // Route Bybit through the Singapore relay so the price MATCHES what the user
-    // trades on. Same relay the autotrader uses.
-    this.relayBaseUrl = relayBaseUrl ? relayBaseUrl.replace(/\/$/, '') : null;
-    this.relayAuthSecret = relayAuthSecret || null;
     this.volumeCache = new Map();   // SYMBOL → { ts, result } — 30s TTL
     // OHLCV cache shared across LONG/SHORT analysis — when both sides run in
     // parallel, the second one would otherwise fire duplicate Coinalyze
@@ -177,18 +166,15 @@ export class TAService {
       try {
         let history = [];
         if (perp) {
-          // Coinalyze can be rate-limited / time out / trip its circuit breaker.
-          // Swallow that so we FALL THROUGH to the Bybit-klines fallback below
-          // instead of failing the whole TA call (the throw would skip it).
+          // Coinalyze can rate-limit / trip its circuit breaker. Swallow that so we
+          // FALL THROUGH to OKX candles instead of failing the whole TA call.
           try {
             const data = await this.coinalyze.ohlcvHistory([perp], tf.interval, now - tf.lookbackSec, now);
             history = data?.[0]?.history ?? [];
           } catch { history = []; }
         }
-        // FALLBACK 1: OKX v5 candles (on-brand, reachable direct or via /okx relay).
-        // Runs with NO relay, unlike the Bybit fallback below, so TA still works when
-        // Coinalyze rate-limits on a geo-blocked host. OKX bars already come back as
-        // {t(sec),o,h,l,c,v} ascending, matching the Coinalyze shape.
+        // FALLBACK: OKX v5 candles (on-brand, reachable direct or via /okx relay).
+        // OKX bars come back as {t(sec),o,h,l,c,v} ascending, matching Coinalyze.
         if ((!Array.isArray(history) || history.length === 0) && this.okx) {
           const bar = OKX_BAR[tf.interval];
           if (bar) {
@@ -201,19 +187,6 @@ export class TAService {
             if (bars && bars.length) history = bars;
           }
         }
-        // FALLBACK 2: no Coinalyze/OKX → Bybit klines (relay only, geo-blocked host).
-        // Bybit bars are {t(ms),…}; normalise to the Coinalyze shape.
-        if (!Array.isArray(history) || history.length === 0) {
-          const bi = BYBIT_KLINE_INTERVAL[tf.interval];
-          if (bi && this.relayBaseUrl) {
-            // perp klines first; spot klines as a last resort (spot-only tokens like SYN)
-            let bars = await this.#fetchBybitKlines(symbol, now - tf.lookbackSec, now, bi);
-            if (!bars || !bars.length) bars = await this.#fetchBybitSpotKlines(symbol, now - tf.lookbackSec, now, bi);
-            if (bars && bars.length) {
-              history = bars.map(b => ({ t: Math.floor(b.t / 1000), o: b.o, h: b.h, l: b.l, c: b.c, v: b.v }));
-            }
-          }
-        }
         if (Array.isArray(history)) this.ohlcvCache.set(key, { ts: Date.now(), history });
         return history;
       } finally {
@@ -224,104 +197,30 @@ export class TAService {
     return p;
   }
 
-  // Returns the most recent 1m close price from Coinalyze for `symbol`,
-  // or null if the token has no perp coverage. This is the *exchange* price
-  // (perp futures), not the smoothed cross-venue CoinGecko price — use this
-  // when calculating entry/SL/TP and when displaying live status, so the
-  // numbers match what the user sees on their exchange (Bybit/OKX/etc.).
-  // Resolve a base token symbol to its Bybit LINEAR perp symbol + the divisor
-  // that converts Bybit's price back to PER-TOKEN. Bybit lists high-supply memes
-  // per-1000 / per-1M ("1000PEPEUSDT", "1000000MOGUSDT"), whose price is
-  // 1000×/1e6× the per-token price the bot's entry/SL/TP use. Without this, a
-  // meme query for "PEPEUSDT" 404s and SL/TP silently resolve on a DIFFERENT
-  // venue than the entry → phantom stop-outs. Tries bare → 1000× → 1e6×, caches
-  // the winner (and negatives) so it costs at most a few probes once per symbol.
-  async #resolveBybitSymbol(sym) {
-    if (!sym) return null;
-    if (!this._bybitSymCache) this._bybitSymCache = new Map();
-    if (this._bybitSymCache.has(sym)) return this._bybitSymCache.get(sym);
-    const variants = [
-      { symbol: `${sym}USDT`, div: 1 },
-      { symbol: `1000${sym}USDT`, div: 1000 },
-      { symbol: `1000000${sym}USDT`, div: 1_000_000 },
-    ];
-    for (const v of variants) {
-      try {
-        const path = `/v5/market/tickers?category=linear&symbol=${v.symbol}`;
-        const url = this.relayBaseUrl ? `${this.relayBaseUrl}${path}` : `https://api.bybit.com${path}`;
-        const opts = { signal: AbortSignal.timeout(4000) };
-        if (this.relayBaseUrl && this.relayAuthSecret) opts.headers = { 'X-Proxy-Auth': this.relayAuthSecret };
-        const res = await fetch(url, opts);
-        if (!res.ok) continue;
-        const j = await res.json();
-        const last = Number(j?.result?.list?.[0]?.lastPrice);
-        if (isFinite(last) && last > 0) {
-          this._bybitSymCache.set(sym, v);
-          return v;
-        }
-      } catch { /* try next variant */ }
-    }
-    this._bybitSymCache.set(sym, null);   // negative cache — no Bybit linear perp
-    return null;
-  }
 
   async getLastPerpPrice(symbol) {
     const sym = (symbol ?? '').toUpperCase();
     const perp = this.perpSymbolMap?.get(sym);
     if (!perp) return null;
 
-    // PRIMARY: live last-traded-price from Bybit linear perps (~1s fresh).
-    // Coinalyze's 1m close can be up to 60s stale, which on a volatile alt
-    // can drift several % vs the real exchange price the user trades on.
-    // Bybit endpoint returns immediately with the actual last fill price.
-    // Cache for 3s — multiple signals in a burst share one HTTP round-trip.
+    // Cache for 3s — bursts of signals share one round-trip.
     const cached = this.livePriceCache?.get(sym);
     if (cached && Date.now() - cached.ts < 3000) return cached.price;
 
-    // Resolve the Bybit symbol (handles 1000×/1e6× memes) and divide back to
-    // per-token so the live price matches the per-token entry/SL/TP.
-    const variant = await this.#resolveBybitSymbol(sym);
-    if (variant) {
+    // PRIMARY: OKX SWAP last price (same venue as the candle feed).
+    if (this.okx) {
       try {
-        // Via the relay when configured (geo-blocked host + price matches Bybit), else direct.
-        const path = `/v5/market/tickers?category=linear&symbol=${variant.symbol}`;
-        const url = this.relayBaseUrl ? `${this.relayBaseUrl}${path}` : `https://api.bybit.com${path}`;
-        const opts = { signal: AbortSignal.timeout(4000) };
-        if (this.relayBaseUrl && this.relayAuthSecret) opts.headers = { 'X-Proxy-Auth': this.relayAuthSecret };
-        const res = await fetch(url, opts);
-        if (res.ok) {
-          const j = await res.json();
-          const raw = Number(j?.result?.list?.[0]?.lastPrice);
-          if (isFinite(raw) && raw > 0) {
-            const price = raw / variant.div;   // per-token
-            if (!this.livePriceCache) this.livePriceCache = new Map();
-            this.livePriceCache.set(sym, { ts: Date.now(), price });
-            return price;
-          }
-        }
-      } catch { /* fall through to OKX */ }
-    }
-
-    // SECONDARY: OKX SWAP last price
-    const okxSym = `${sym}-USDT-SWAP`;
-    try {
-      const res = await fetch(
-        `https://www.okx.com/api/v5/market/ticker?instId=${okxSym}`,
-        { signal: AbortSignal.timeout(4000) }
-      );
-      if (res.ok) {
-        const j = await res.json();
-        const last = Number(j?.data?.[0]?.last);
+        const last = await this.okx.getTickerLast(this.#okxInstId(sym));
         if (isFinite(last) && last > 0) {
           if (!this.livePriceCache) this.livePriceCache = new Map();
           this.livePriceCache.set(sym, { ts: Date.now(), price: last });
           return last;
         }
-      }
-    } catch { /* fall through to Coinalyze */ }
+      } catch { /* fall through to Coinalyze */ }
+    }
 
     // FALLBACK: Coinalyze 1m close (could be up to ~60s stale).
-    // Better than nothing for tokens without Bybit/OKX coverage.
+    // Better than nothing for tokens without OKX coverage.
     if (!this.coinalyze) return null;
     const now = Math.floor(Date.now() / 1000);
     try {
@@ -344,17 +243,24 @@ export class TAService {
   // weren't being detected by the bot).
   async getRecentBars(symbol, fromTs, toTs) {
     const sym = (symbol ?? '').toUpperCase();
-    // PRIMARY: Bybit linear 1m klines — the SAME venue as getLastPerpPrice and
-    // the user's actual trades. SL/TP resolution MUST use this so it can't fire
-    // off a different exchange's market (the $H phantom-SL bug: the trade was
-    // entered/priced on Bybit ~0.24 but Coinalyze's perp for "H" printed ~0.13,
-    // tripping a stop that never happened on Bybit).
-    const bybit = await this.#fetchBybitKlines(sym, fromTs, toTs);
-    if (bybit && bybit.length) return bybit;
+    // PRIMARY: OKX 1m candles (same venue as getLastPerpPrice) so SL/TP resolution
+    // uses the venue the trade was priced on. OKX returns the most-recent 300 bars
+    // (~5h); filter to the requested window and emit t in ms for the resolver.
+    if (this.okx) {
+      try {
+        const bars = await this.okx.getCandles(this.#okxInstId(sym), '1m', 300);
+        if (bars && bars.length) {
+          const win = bars
+            .filter((b) => b.t >= fromTs && b.t <= toTs)
+            .map((b) => ({ t: b.t * 1000, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v }));
+          if (win.length) return win;
+        }
+      } catch { /* fall through to Coinalyze */ }
+    }
 
-    // FALLBACK: Coinalyze (tokens without a Bybit linear perp).
+    // FALLBACK: Coinalyze (tokens without an OKX perp, or older windows).
     const perp = this.perpSymbolMap?.get(sym);
-    if (!this.coinalyze || !perp) return bybit;   // null or [] — let caller fall back to price
+    if (!this.coinalyze || !perp) return null;   // let caller fall back to price
     try {
       const data = await this.coinalyze.ohlcvHistory([perp], '1min', fromTs, toTs);
       const bars = data?.[0]?.history;
@@ -382,65 +288,6 @@ export class TAService {
     const inst = this.okxSwapMap?.get(sym) || `${sym}-USDT-SWAP`;
     this.okxSymCache.set(sym, inst);
     return inst;
-  }
-
-  // Bybit linear 1m klines between unix-second timestamps. Routes via the relay
-  // (geo-blocked host) when configured. Bybit returns up to 1000 bars, NEWEST
-  // first, each [start(ms), open, high, low, close, volume, turnover] as strings.
-  async #fetchBybitKlines(sym, fromTs, toTs, interval = '1') {
-    if (!sym) return null;
-    // Resolve the Bybit symbol + per-token divisor (handles 1000×/1e6× memes) so
-    // meme SL/TP resolve on Bybit (the trade venue), scaled to match the
-    // per-token entry — instead of 404-ing and falling back to a foreign venue.
-    const variant = await this.#resolveBybitSymbol(sym);
-    if (!variant) return null;
-    const div = variant.div;
-    const start = Math.floor(Number(fromTs) * 1000);
-    const end = Math.floor(Number(toTs) * 1000);
-    if (!isFinite(start) || !isFinite(end)) return null;
-    try {
-      const path = `/v5/market/kline?category=linear&symbol=${variant.symbol}&interval=${interval}&start=${start}&end=${end}&limit=1000`;
-      const url = this.relayBaseUrl ? `${this.relayBaseUrl}${path}` : `https://api.bybit.com${path}`;
-      const opts = { signal: AbortSignal.timeout(6000) };
-      if (this.relayBaseUrl && this.relayAuthSecret) opts.headers = { 'X-Proxy-Auth': this.relayAuthSecret };
-      const res = await fetch(url, opts);
-      if (!res.ok) return null;
-      const j = await res.json();
-      const list = j?.result?.list;
-      if (!Array.isArray(list) || list.length === 0) return null;
-      return list.map(k => ({
-        t: Number(k[0]),
-        o: Number(k[1]) / div, h: Number(k[2]) / div, l: Number(k[3]) / div, c: Number(k[4]) / div,
-        v: Number(k[5] ?? 0)
-      })).filter(b => isFinite(b.c) && isFinite(b.h) && isFinite(b.l))
-        .sort((a, b) => a.t - b.t);   // ascending (signal-tracker re-sorts, but keep tidy)
-    } catch { return null; }
-  }
-
-  // Bybit SPOT klines — last-resort fallback for tokens with NO perp anywhere
-  // (no Coinalyze perp, no Bybit linear perp) that ARE spot-listed on Bybit. Lets
-  // /analyze run multi-TF TA on spot-only tokens too (the SYN gap). Spot has no
-  // meme-prefix divisors, so the bare SYMUSDT symbol is used with div = 1.
-  async #fetchBybitSpotKlines(sym, fromTs, toTs, interval = '1') {
-    if (!sym) return null;
-    const start = Math.floor(Number(fromTs) * 1000);
-    const end = Math.floor(Number(toTs) * 1000);
-    if (!isFinite(start) || !isFinite(end)) return null;
-    try {
-      const path = `/v5/market/kline?category=spot&symbol=${sym}USDT&interval=${interval}&start=${start}&end=${end}&limit=1000`;
-      const url = this.relayBaseUrl ? `${this.relayBaseUrl}${path}` : `https://api.bybit.com${path}`;
-      const opts = { signal: AbortSignal.timeout(6000) };
-      if (this.relayBaseUrl && this.relayAuthSecret) opts.headers = { 'X-Proxy-Auth': this.relayAuthSecret };
-      const res = await fetch(url, opts);
-      if (!res.ok) return null;
-      const j = await res.json();
-      const list = j?.result?.list;
-      if (!Array.isArray(list) || list.length === 0) return null;
-      return list.map(k => ({
-        t: Number(k[0]), o: Number(k[1]), h: Number(k[2]), l: Number(k[3]), c: Number(k[4]), v: Number(k[5] ?? 0)
-      })).filter(b => isFinite(b.c) && isFinite(b.h) && isFinite(b.l))
-        .sort((a, b) => a.t - b.t);
-    } catch { return null; }
   }
 
   // Returns { ratio, currentVol, avgVol } for the most recent 1m bar vs the
@@ -533,10 +380,10 @@ export class TAService {
     if (!this.coinalyze || !this.perpSymbolMap) return { findings: [], metadata: null };
     const sym = (tokenSymbol ?? '').toUpperCase();
     const perp = this.perpSymbolMap.get(sym);
-    // No Coinalyze perp is no longer fatal — if the relay is configured we fall back
-    // to Bybit klines per TF (see #fetchOhlcv), so TA runs on any Bybit-listed token.
-    // Bail only when there's neither a Coinalyze perp NOR a Bybit route.
-    if (!perp && !this.relayBaseUrl) return { findings: [], metadata: null };
+    // No Coinalyze perp is no longer fatal — OKX candles per TF (see #fetchOhlcv)
+    // let TA run on any OKX-listed token. Bail only with neither a Coinalyze perp
+    // nor an OKX client.
+    if (!perp && !this.okx) return { findings: [], metadata: null };
 
     const cacheKey = `${sym}|${side}`;
     const cached = this.cache.get(cacheKey);
@@ -590,7 +437,7 @@ export class TAService {
 
     // ── Long/Short ratio from Coinalyze ────────────────────────────────────
     // Extreme positioning beyond what funding alone shows. Coinalyze-perp only —
-    // skipped for Bybit-fallback tokens (TA still runs; L/S just isn't available).
+    // skipped for OKX-only tokens (TA still runs; L/S just isn't available).
     if (perp) try {
       const fromTs = now - 6 * 3600;
       const lsData = await this.coinalyze.longShortRatio([perp], '1hour', fromTs, now);

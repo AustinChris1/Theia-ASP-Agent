@@ -1,0 +1,7 @@
+{
+  "name": "theia-relay",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "description": "Singapore-egress reverse-proxy for OKX/Bybit/Binance/Coinalyze market data."
+}

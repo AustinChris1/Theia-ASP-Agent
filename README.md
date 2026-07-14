@@ -51,10 +51,20 @@ fidelity, never crashes the server.
 
 1. `npm install`
 2. Copy `.env.example` to `.env` and fill it in. Minimum for real reads:
-   - `COINALYZE_API_KEY` (multi-TF TA, funding, liquidation heatmap): coinalyze.net, free tier
-   - `MORALIS_API_KEY` (insider discovery): moralis.io, free tier
-   - `RELAY_BASE_URL` + `BYBIT_PROXY_SECRET` (optional; a relay egress if your host IP is geo-blocked from Binance/Bybit)
+   - `RELAY_BASE_URL` + `RELAY_AUTH_SECRET` (recommended): the Fly Singapore relay in `relay/`. `okx.com` is geo-blocked from most hosts, so this is what makes OKX prices/funding/OI/candles/orderbook reachable. See `relay/README.md`.
+   - `COINALYZE_API_KEY` (neutral fallback for liquidations + TA cache): coinalyze.net, free tier
+   - `COINGECKO_API_KEY` (token universe + spot prices): coingecko.com, free demo tier
+   - `MORALIS_API_KEY` (insider/holder discovery): moralis.io, free tier
+   - `ASP_ENABLE_OKX_MARKET_DATA=0` only if you have no relay and okx.com is blocked from your IP
    - For live x402: `X402_PAY_TO`, `X402_ASSET_USDT_ADDRESS`, `X402_FACILITATOR_URL`, `X402_ENFORCE=1`
+
+### Market data
+
+All exchange data comes from **OKX v5** (`src/okx.js`): SWAP tickers (prices), funding
+rate, open interest, candles (multi-timeframe TA), orderbook depth (liquidity
+clusters), and taker-volume (CVD). Coinalyze and CoinGecko are kept as neutral
+aggregators for liquidations, TA cache, and the token universe. Deploy the Singapore
+relay in `relay/` so a US host (or a geo-blocked local IP) can reach OKX.
 
 ## Run
 

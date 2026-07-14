@@ -140,9 +140,11 @@ export class FundingMonitor extends EventEmitter {
     const sym = String(symbol || '').toUpperCase();
     if (!sym || !this.okx) return this.bySymbol.get(sym) ?? null;
     const existing = this.bySymbol.get(sym);
-    const fresh = existing?.summary && typeof existing.summary.avg === 'number'
-      && Date.now() - (existing.summary.updatedAt ?? 0) < this.pollIntervalMs;
-    if (fresh) return existing;
+    // OKX is primary: reuse only a very-recent OKX read (avoid hammering on bursts);
+    // otherwise fetch fresh from OKX. Coinalyze's cached value is the fallback.
+    if (existing?.summary?.source === 'okx' && Date.now() - (existing.summary.updatedAt ?? 0) < 60_000) {
+      return existing;
+    }
 
     const inst = this.okxSwapMap?.get(sym) || `${sym}-USDT-SWAP`;
     try {

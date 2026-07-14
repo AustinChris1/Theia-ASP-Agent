@@ -28,5 +28,4 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
-.wrangler/
-cloudflare-worker/node_modules/
+relay/.fly/

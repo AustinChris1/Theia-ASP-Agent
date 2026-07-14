@@ -1,5 +1,0 @@
-# Wrangler config for the Theia data relay Worker.
-# Deploy:  cd cloudflare-worker && npx wrangler secret put PROXY_SECRET && npx wrangler deploy
-name = "theia-relay"
-main = "relay.js"
-compatibility_date = "2024-09-01"

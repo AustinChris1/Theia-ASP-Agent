@@ -6,33 +6,18 @@
 // orderbook depth, which IS free.
 //
 // What we do:
-//   1. Fetch L2 depth for a perp symbol from Binance AND Bybit in parallel
-//      (both via the Singapore relay), falling back to OKX if neither covers
-//      the token.
-//   2. Bucket bids/asks into 0.5% price buckets relative to each venue's mid,
-//      then MERGE across venues — a wall confirmed on both venues is weighted
-//      up; a single-venue wall (likely spoof) is weighted down.
-//   3. Return buckets ranked by confirmation-weighted size — the densest,
-//      most-confirmed buckets are the "liquidity clusters" / heatmap walls.
+//   1. Fetch L2 depth for a perp symbol from OKX (/api/v5/market/books).
+//   2. Bucket bids/asks into 0.5% price buckets relative to mid.
+//   3. Return buckets ranked by size — the densest are the "liquidity clusters".
 //
 // This complements the existing `#getLiquidationClusters` in conductor.js,
 // which derives clusters from RECENT LIQUIDATIONS (where leverage was just
 // wiped). Orderbook-derived clusters are PROSPECTIVE — where the next wipe
-// is likely to happen. Together they give a view very similar to what the
-// commercial heatmap products show.
-//
-// Sources tried (in order):
-//   • Bybit  /v5/market/orderbook         (linear perps, no auth, 500 depth)
-//   • OKX    /api/v5/market/books         (swap perps, no auth, 400 depth)
-//   • Binance /fapi/v1/depth              (futures, no auth, 1000 depth)
-//
-// Each call returns within ~200ms in production. We cache results for
-// 60s — clusters don't shift faster than that for normal-sized tokens.
+// is likely to happen.
 
 const FETCH_TIMEOUT_MS = 7000;
 const CACHE_TTL_MS = 60_000;
 const BUCKET_PCT = 0.5;          // 0.5% wide buckets
-const DEPTH_LIMIT = 500;         // Bybit linear max; deeper book → far walls visible
 const SCORE_DIST_PCT = 10;       // near band kept for trade SCORING (unchanged)
 const WIDE_DIST_PCT = 100;       // far band kept for the /heatmap DISPLAY only
 
@@ -125,22 +110,17 @@ export function aggregateOrderbookClusters(books, { bucketPct = BUCKET_PCT, conf
 }
 
 export class LiquidityClusters {
-  constructor({ perpSymbolMap, verbose = false, relayBaseUrl = null, relayAuthSecret = null }) {
+  constructor({ perpSymbolMap, verbose = false, okx = null }) {
     this.perpSymbolMap = perpSymbolMap;
     this.verbose = verbose;
-    // Singapore relay for Binance depth. Binance has the DEEPEST free book
-    // (1000 levels) — the best heatmap source — but is geo-blocked on some
-    // VPS IPs. With the relay configured we prefer Binance; otherwise it's the
-    // last fallback (direct, usually blocked).
-    this.relayBaseUrl = relayBaseUrl ? relayBaseUrl.replace(/\/$/, '') : null;
-    this.relayAuthSecret = relayAuthSecret || null;
+    this.okx = okx;              // OKX v5 client — the orderbook depth source
     this.cache = new Map();      // SYMBOL → { ts, clusters }
     this.pending = new Map();    // SYMBOL → in-flight Promise
   }
 
   // One-shot reachability test. Called at startup so the user sees in the
-  // boot log whether Bybit/OKX/Binance orderbook depth is actually reachable
-  // from this VPS. Without this, the heatmap could silently never fire and
+  // boot log whether OKX orderbook depth is actually reachable
+  // from this host. Without this, the heatmap could silently never fire and
   // you wouldn't know which provider (if any) is being blocked.
   async selfTest() {
     const r = await this.#fetchClusters('BTC');
@@ -150,7 +130,7 @@ export class LiquidityClusters {
       console.log(`[liq-clusters] self-test OK via ${r.source} — BTC mid $${r.mid.toFixed(0)}, ${r.askClusters.length} ask clusters ($${(totalAsk/1e6).toFixed(1)}M total), ${r.bidClusters.length} bid clusters ($${(totalBid/1e6).toFixed(1)}M)`);
       return true;
     }
-    console.warn('[liq-clusters] self-test FAILED — Bybit/OKX/Binance orderbook depth unreachable from this host. Heatmap scoring will silently skip.');
+    console.warn('[liq-clusters] self-test FAILED — OKX orderbook depth unreachable from this host. Heatmap scoring will silently skip.');
     return false;
   }
 
@@ -181,84 +161,22 @@ export class LiquidityClusters {
   }
 
   async #fetchClusters(sym) {
-    // Aggregate the two deepest venues we can reach — Binance (deepest book,
-    // leads price) + Bybit (your actual execution venue) — both via the relay,
-    // fetched in PARALLEL. Cross-confirmation between them is a free spoof
-    // filter (see aggregateOrderbookClusters). OKX is a last-resort fallback
-    // only when neither primary returns a usable book (token coverage).
-    const [binance, bybit] = await Promise.all([
-      this.#fetchBinance(sym).catch(() => null),
-      this.#fetchBybit(sym).catch(() => null)
-    ]);
-    let result = aggregateOrderbookClusters([binance, bybit]);
-    if (!result) {
-      const okx = await this.#fetchOkx(sym).catch(() => null);
-      result = aggregateOrderbookClusters([okx]);
-    }
-    return result;
+    // OKX orderbook depth only — on-brand, no competitor exchanges.
+    const okx = await this.#fetchOkx(sym).catch(() => null);
+    return aggregateOrderbookClusters([okx]);
   }
 
-  // ── Provider fetchers — all return { bids, asks, source } or null ────
-
-  async #fetchBybit(sym) {
-    const perp = this.perpSymbolMap?.get(sym);
-    if (!perp) return null;
-    // perpSymbolMap stores formats like "BYBIT_USDT_BTC" or "BTCUSDT" depending
-    // on how it was built. Try the Bybit-native form first; if our map gives
-    // us a vendor-prefixed code, fall back to symbol+USDT.
-    const bybitSym = /^[A-Z0-9]+USDT$/.test(perp) ? perp : `${sym}USDT`;
-    const path = `/v5/market/orderbook?category=linear&symbol=${bybitSym}&limit=${DEPTH_LIMIT}`;
-    // Route through the Singapore relay when configured — Bybit is geo-blocked
-    // on the US VPS just like Binance (the relay proxies /relay/* → Bybit).
-    const url = this.relayBaseUrl ? `${this.relayBaseUrl}${path}` : `https://api.bybit.com${path}`;
-    const opts = { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) };
-    if (this.relayBaseUrl && this.relayAuthSecret) opts.headers = { 'X-Proxy-Auth': this.relayAuthSecret };
-    try {
-      const res = await fetch(url, opts);
-      if (!res.ok) return null;
-      const j = await res.json();
-      if (j.relayError) return null;     // relay reported an upstream failure
-      if (j.retCode !== 0 || !j.result) return null;
-      return { bids: j.result.b ?? [], asks: j.result.a ?? [], source: 'bybit' };
-    } catch (err) {
-      if (this.verbose) console.warn(`[liq-clusters] bybit ${sym}: ${err.message}`);
-      return null;
-    }
-  }
-
+  // ── Provider fetcher — OKX orderbook only ────
   async #fetchOkx(sym) {
+    if (!this.okx) return null;
     const okxSym = `${sym}-USDT-SWAP`;
     try {
-      const url = `https://www.okx.com/api/v5/market/books?instId=${okxSym}&sz=400`;
-      const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
-      if (!res.ok) return null;
-      const j = await res.json();
-      const book = j.data?.[0];
+      const book = await this.okx.getOrderbook(okxSym, 400);
       if (!book) return null;
       // OKX rows are [price, size, ?, count]; we only need [0],[1]
       return { bids: book.bids ?? [], asks: book.asks ?? [], source: 'okx' };
     } catch (err) {
       if (this.verbose) console.warn(`[liq-clusters] okx ${sym}: ${err.message}`);
-      return null;
-    }
-  }
-
-  async #fetchBinance(sym) {
-    const binSym = `${sym}USDT`;
-    // 1000 levels = the deepest free book (best heatmap). Routed through the
-    // Singapore relay when configured (relayBase/binance/...), else direct.
-    const path = `/fapi/v1/depth?symbol=${binSym}&limit=1000`;
-    const url = this.relayBaseUrl ? `${this.relayBaseUrl}/binance${path}` : `https://fapi.binance.com${path}`;
-    const opts = { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) };
-    if (this.relayBaseUrl && this.relayAuthSecret) opts.headers = { 'X-Proxy-Auth': this.relayAuthSecret };
-    try {
-      const res = await fetch(url, opts);
-      if (!res.ok) return null;
-      const j = await res.json();
-      if (j.relayError) return null;     // relay reported an upstream failure
-      return { bids: j.bids ?? [], asks: j.asks ?? [], source: this.relayBaseUrl ? 'binance/relay' : 'binance' };
-    } catch (err) {
-      if (this.verbose) console.warn(`[liq-clusters] binance ${sym}: ${err.message}`);
       return null;
     }
   }

@@ -6,48 +6,27 @@
 // aggressive (market-order) flow is net SELLING into it. CVD measures exactly
 // that — taker-buy volume minus taker-sell volume.
 //
-// We get it WITHOUT a WebSocket (the host is geo-blocked from Binance/Bybit and
-// the relay only proxies HTTP): Binance futures klines already carry per-bar
-// "taker buy" volume, so one REST call over the last N 1m bars yields a true
-// CVD. Computed ON DEMAND only when a momentum signal is about to fire, then
-// briefly cached — bounded and cheap. FAIL-OPEN: any fetch/parse problem returns
-// veto=false, so a network blip never silences the bot.
+// Source is OKX (no competitor exchange): the rubik taker-volume endpoint gives
+// per-bar taker buy/sell volume for CVD, and 1m candles give the price move.
+// Computed ON DEMAND when a momentum signal is about to fire, then briefly cached.
+// FAIL-OPEN: any fetch/parse problem returns veto=false, so a blip never silences it.
 //
 // Veto rule (only the trade's OWN side, only on CLEAR divergence):
 //   • LONG  fired on a price rise, but net taker delta is SELLING  → fakeout → veto
 //   • SHORT fired on a price drop, but net taker delta is BUYING   → fakeout → veto
 // Agreement (or weak/no divergence) never vetoes.
+import { OkxClient } from './okx.js';
 
-const FAPI = 'https://fapi.binance.com';
 const cache = new Map();   // `${base}|${bars}` → { ts, result }
 
 const env = (k, d) => { const v = process.env[k]; return v == null || v === '' ? d : v; };
 
-function relayConfig(override = {}) {
-  const base = override.relayBaseUrl ?? env('RELAY_BASE_URL', env('BYBIT_BASE_URL', null));
-  return {
-    relayBaseUrl: base ? String(base).replace(/\/$/, '') : null,
-    relayAuthSecret: override.relayAuthSecret ?? env('BYBIT_PROXY_SECRET', null),
-  };
-}
-
-async function fetchKlines(base, bars, { relayBaseUrl, relayAuthSecret }) {
-  const path = `/fapi/v1/klines?symbol=${base}USDT&interval=1m&limit=${bars}`;
-  // Relay first when configured (the host is geo-blocked direct); else direct.
-  const targets = [];
-  if (relayBaseUrl) targets.push({ url: `${relayBaseUrl}/binance${path}`, auth: relayAuthSecret });
-  targets.push({ url: `${FAPI}${path}`, auth: null });
-  for (const t of targets) {
-    try {
-      const opts = { signal: AbortSignal.timeout(6000) };
-      if (t.auth) opts.headers = { 'X-Proxy-Auth': t.auth };
-      const res = await fetch(t.url, opts);
-      if (!res.ok) continue;
-      const j = await res.json();
-      if (Array.isArray(j) && j.length) return j;
-    } catch { /* try next target */ }
-  }
-  return null;
+function okxFromEnv(override = {}) {
+  return new OkxClient({
+    baseUrl: override.okxBaseUrl ?? env('OKX_BASE_URL', null),
+    relayBaseUrl: override.relayBaseUrl ?? env('RELAY_BASE_URL', null),
+    relayAuthSecret: override.relayAuthSecret ?? env('RELAY_AUTH_SECRET', null),
+  });
 }
 
 // Returns { veto, reason, priceChangePct, cvdRatio, netDeltaUsd, totalUsd, bars }.
@@ -67,23 +46,25 @@ export async function cvdVeto({ symbol, side, bars, minMovePct, opposeRatio, ttl
   const nowTs = hit ? null : null;   // Date.now() unavailable in some sandboxes; rely on ttl via caller cadence
   if (hit && (Date.now() - hit.ts) < ttlMs) return decide(hit.result, S, MIN_MOVE, OPPOSE);
 
-  const klines = await fetchKlines(base, N, relayConfig(override));
-  if (!klines) {
+  const okx = okxFromEnv(override);
+  const [takers, candles] = await Promise.all([
+    okx.getTakerVolume(base, '1m', N).catch(() => null),
+    okx.getCandles(`${base}-USDT-SWAP`, '1m', N).catch(() => null),
+  ]);
+  if (!takers || !candles || !candles.length) {
     const noData = { reason: 'no-data', priceChangePct: null, cvdRatio: null, netDeltaUsd: null, totalUsd: null, bars: N };
     cache.set(key, { ts: Date.now(), result: noData });
     return { veto: false, ...noData };   // FAIL-OPEN
   }
 
   let netDeltaUsd = 0, totalUsd = 0;
-  const firstOpen = Number(klines[0][1]);
-  const lastClose = Number(klines[klines.length - 1][4]);
-  for (const k of klines) {
-    const quoteVol = Number(k[7]);          // total quote (USD) volume
-    const takerBuyQuote = Number(k[10]);    // taker BUY quote (USD) volume
-    if (!isFinite(quoteVol) || !isFinite(takerBuyQuote)) continue;
-    netDeltaUsd += (2 * takerBuyQuote - quoteVol);   // buy − sell
-    totalUsd += quoteVol;
+  for (const t of takers) {
+    if (!isFinite(t.buy) || !isFinite(t.sell)) continue;
+    netDeltaUsd += (t.buy - t.sell);   // taker buy − sell
+    totalUsd += (t.buy + t.sell);
   }
+  const firstOpen = candles[0].o;
+  const lastClose = candles[candles.length - 1].c;
   const priceChangePct = (isFinite(firstOpen) && firstOpen > 0 && isFinite(lastClose))
     ? ((lastClose - firstOpen) / firstOpen) * 100 : null;
   const cvdRatio = totalUsd > 0 ? netDeltaUsd / totalUsd : null;   // ∈ [-1, 1]

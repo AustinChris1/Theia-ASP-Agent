@@ -74,15 +74,15 @@ export const config = {
   engine: {
     // OKX v5 market data (candles/funding/OI). Blank = direct www.okx.com; set to a
     // relay base if okx.com is geo-blocked from the host.
+    enableOkxMarketData: bool('ASP_ENABLE_OKX_MARKET_DATA', true),
     okxBaseUrl: str('OKX_BASE_URL', null),
     coinalyzeApiKey: str('COINALYZE_API_KEY', null),
     coinalyzeApiKeyLiq: str('COINALYZE_API_KEY_LIQ', null),
     moralisApiKey: str('MORALIS_API_KEY', null),
-    relayBaseUrl: (str('RELAY_BASE_URL') || str('BYBIT_BASE_URL') || '').replace(/\/$/, '') || null,
-    relayAuthSecret: str('BYBIT_PROXY_SECRET', null),
+    relayBaseUrl: (str('RELAY_BASE_URL') || '').replace(/\/$/, '') || null,
+    relayAuthSecret: str('RELAY_AUTH_SECRET', null),
     universeTopN: num('ASP_UNIVERSE_TOP_N', 300),
     universeVolumeTopN: num('ASP_UNIVERSE_VOLUME_TOP_N', 200),
-    enableBinanceFutures: bool('ASP_ENABLE_BINANCE_FUTURES', true),
     enableTeamDiscovery: bool('ASP_ENABLE_TEAM_DISCOVERY', true),
     teamDiscoveryMaxTokens: num('ASP_TEAM_MAX_TOKENS', 100),
     verbose: bool('ASP_VERBOSE', false),

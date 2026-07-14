@@ -63,6 +63,45 @@ export class OkxClient {
     return { instId: row.instId, fundingRate: rate, nextFundingTime: Number(row.nextFundingTime) || null };
   }
 
+  // Current last-traded price for any OKX instrument.
+  async getTickerLast(instId) {
+    if (!instId) return null;
+    const data = await this.#get(`/market/ticker?instId=${encodeURIComponent(instId)}`);
+    const last = Number(Array.isArray(data) ? data[0]?.last : null);
+    return Number.isFinite(last) && last > 0 ? last : null;
+  }
+
+  // All USDT-SWAP tickers in one call. Map<baseSymbol, { price, pct, vol(USD) }> or null.
+  // Replaces the Bybit all-tickers feed as the engine's fast price/volume source.
+  async getSwapTickers() {
+    const data = await this.#get('/market/tickers?instType=SWAP');
+    if (!Array.isArray(data) || data.length === 0) return null;
+    const out = new Map();
+    for (const t of data) {
+      const instId = t.instId;
+      if (typeof instId !== 'string' || !/^[A-Z0-9]+-USDT-SWAP$/.test(instId)) continue;
+      const base = instId.split('-')[0];
+      const price = Number(t.last);
+      if (!Number.isFinite(price) || price <= 0) continue;
+      const open = Number(t.open24h);
+      const pct = Number.isFinite(open) && open > 0 ? ((price - open) / open) * 100 : null;
+      const volCcy = Number(t.volCcy24h);
+      const vol = Number.isFinite(volCcy) ? volCcy * price : null; // USD turnover approx
+      out.set(base, { price, pct, vol });
+    }
+    return out.size ? out : null;
+  }
+
+  // L2 orderbook for an OKX instrument. Returns raw OKX rows or null.
+  async getOrderbook(instId, size = 400) {
+    if (!instId) return null;
+    const sz = Math.min(Math.max(Number(size) || 400, 1), 400);
+    const data = await this.#get(`/market/books?instId=${encodeURIComponent(instId)}&sz=${sz}`);
+    const book = Array.isArray(data) ? data[0] : null;
+    if (!book?.bids?.length || !book?.asks?.length) return null;
+    return { bids: book.bids, asks: book.asks };
+  }
+
   // Current open interest for a SWAP instId. Returns { oi(contracts), oiCcy(base units), ts } or null.
   async getOpenInterest(instId) {
     if (!instId) return null;
@@ -71,6 +110,18 @@ export class OkxClient {
     if (!row) return null;
     const oiCcy = Number(row.oiCcy);
     return { instId: row.instId, oi: Number(row.oi) || null, oiCcy: Number.isFinite(oiCcy) ? oiCcy : null, ts: Number(row.ts) || null };
+  }
+
+  // Taker buy/sell volume for a base ccy (rubik stats), for CVD. Returns ascending
+  // [{ ts, buy, sell }] or null. Units cancel in the buy-vs-sell ratio CVD uses.
+  async getTakerVolume(ccy, period = '1m', limit = 60) {
+    if (!ccy) return null;
+    const data = await this.#get(`/rubik/stat/taker-volume?ccy=${encodeURIComponent(ccy)}&instType=CONTRACTS&period=${period}`);
+    if (!Array.isArray(data) || data.length === 0) return null;
+    const rows = data.map((r) => ({ ts: Number(r[0]), sell: Number(r[1]), buy: Number(r[2]) }))
+      .filter((r) => Number.isFinite(r.buy) && Number.isFinite(r.sell))
+      .sort((a, b) => a.ts - b.ts);
+    return rows.length ? rows.slice(-Math.max(1, limit)) : null;
   }
 
   // List instruments of a type (e.g. SWAP). Returns the raw OKX rows or null.

@@ -29,7 +29,7 @@ intelligence core (`src/`) plus the ASP app (root) remain.
 | Signal scoring + trade-plan builder (the brain) | `src/conductor.js` |
 | Outcome resolver + win-rate stats | `src/signal-tracker.js` |
 | Multi-TF technical analysis | `src/ta.js`, `src/ta-confirm.js`, `src/timeframes.js`, `src/smc.js` |
-| Prices / funding / OI data | `src/prices.js`, `src/funding.js`, `src/binance-futures.js`, `src/coinalyze.js` |
+| OKX market data (prices/funding/OI/candles/orderbook/CVD) | `src/okx.js` (client), `src/prices.js`, `src/funding.js`, `src/liquidity-clusters.js`, `src/coinalyze.js` (neutral fallback) |
 | Insider/team discovery + cold-wallet holdings | `src/team-wallet-discovery.js`, `src/cex-holdings.js` |
 | Persistence (Neon kv + journal, JSON fallback) | `src/db.js` |
 
@@ -38,7 +38,7 @@ intelligence core (`src/`) plus the ASP app (root) remain.
 - The ASP IMPORTS the engine from `src/`; it never forks the scoring. `conductor.evaluateForAnalysis({symbol, allowFetch:true})` is the spine of `theia_signal`.
 - The engine is deterministic and auditable. An LLM may narrate output, never decide a trade.
 - The ASP reads ONLY the root `.env` (fresh, ASP-only). The x402 wallet lives in the `onchainos` CLI/TEE, not in env.
-- Bybit/Binance are geo-blocked from cloud hosts; route data via the relay (`RELAY_BASE_URL`, header from `BYBIT_PROXY_SECRET`).
+- OKX v5 is the exchange source for all market data (`src/okx.js`): prices, funding, OI, candles, orderbook, CVD. `okx.com` is geo-blocked from many hosts, so route it via the Fly Singapore relay in `relay/` (`RELAY_BASE_URL` + `RELAY_AUTH_SECRET`; OKX auto-routes `${RELAY_BASE_URL}/okx`). Coinalyze/CoinGecko/Moralis remain as neutral aggregators.
 - Every external `fetch` uses `AbortSignal.timeout(...)`. Keep that.
 - Secrets: `.env`, `logs/` are gitignored. Never commit a secret. This repo may become a public submission.
 - Keep comments terse (one line max). No em-dashes in user-facing copy or docs.

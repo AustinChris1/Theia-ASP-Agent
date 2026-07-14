@@ -30,7 +30,7 @@ const deepDesk = await import('../a2a/deep-desk.js');
 // ── Mock engine (no network) ─────────────────────────────────────────────────
 const BTC = { symbol: 'BTC', name: 'Bitcoin', coingeckoId: 'bitcoin', marketCap: 1.2e12, circulatingSupply: 19e6, totalSupply: 21e6, chains: {} };
 const mockEngine = {
-  status: { ta: true, funding: 'binance', heatmap: true, clusters: true, teamDiscovery: true, cexHoldings: true },
+  status: { ta: true, funding: 'coinalyze', heatmap: true, clusters: true, teamDiscovery: true, cexHoldings: true },
   universe: {
     allCgIds: () => ['bitcoin'],
     lookupByCgId: (id) => (id === 'bitcoin' ? BTC : null),
@@ -329,6 +329,8 @@ group('okx client');
       ['1700000600000', '10', '12', '9', '11', '100', 'x', 'x', '1'],
       ['1700000000000', '9', '11', '8', '10', '90', 'x', 'x', '1'],
     ]);
+    if (u.includes('/market/ticker')) return body([{ instId: 'BTC-USDT-SWAP', last: '60001.5' }]);
+    if (u.includes('/market/books')) return body([{ bids: [['60000', '1']], asks: [['60002', '2']] }]);
     if (u.includes('/public/funding-rate')) return body([{ instId: 'BTC-USDT-SWAP', fundingRate: '0.0001', nextFundingTime: '1700003600000' }]);
     if (u.includes('/public/open-interest')) return body([{ instId: 'BTC-USDT-SWAP', oi: '1000', oiCcy: '50', ts: '1700000000000' }]);
     if (u.includes('/public/instruments')) return body([
@@ -344,6 +346,9 @@ group('okx client');
   ok(candles[0].t === 1700000000 && candles[0].c === 10, 'candle ms->sec + OHLC parsed');
   const fr = await okx.getFundingRate('BTC-USDT-SWAP');
   ok(fr.fundingRate === 0.0001 && typeof fr.fundingRate === 'number', 'funding rate parsed as number');
+  ok((await okx.getTickerLast('BTC-USDT-SWAP')) === 60001.5, 'ticker last parsed as number');
+  const book = await okx.getOrderbook('BTC-USDT-SWAP');
+  ok(book.bids.length === 1 && book.asks.length === 1, 'orderbook parsed');
   const oi = await okx.getOpenInterest('BTC-USDT-SWAP');
   ok(oi.oiCcy === 50, 'open interest oiCcy parsed');
   const map = await okx.buildSwapMap();
@@ -380,6 +385,15 @@ group('funding okx gap-filler');
 
   const fm2 = new FundingMonitor({ coinalyze: null, perpSymbolMap: new Map(), universe: {}, okx: null });
   ok((await fm2.ensureBySymbol('ETH')) === null, 'no okx client returns null gracefully');
+}
+
+// ── Fly relay routing (pure fn; no port bound) ────────────────────────────────
+group('relay routing');
+{
+  const { resolveTarget } = await import('../relay/server.js');
+  ok(resolveTarget('/okx/api/v5/market/candles', '?instId=BTC-USDT') === 'https://www.okx.com/api/v5/market/candles?instId=BTC-USDT', 'okx prefix stripped + forwarded');
+  ok(resolveTarget('/coinalyze/v1/funding-rate', '?a=1') === 'https://api.coinalyze.net/v1/funding-rate?a=1', 'coinalyze route + query preserved');
+  ok(resolveTarget('/api/v5/market/tickers', '?instType=SWAP') === 'https://www.okx.com/api/v5/market/tickers?instType=SWAP', 'default route -> okx');
 }
 
 // ── Report ───────────────────────────────────────────────────────────────────
