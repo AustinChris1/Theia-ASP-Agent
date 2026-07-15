@@ -33,12 +33,14 @@ export function buildPaymentRequired({ resource, priceUsdt, description }) {
     payTo: config.x402.payTo,
     maxTimeoutSeconds: 120,
     asset: asset.address,
+    decimals: asset.decimals,
     extra: {
       name: asset.eip712Name,
       version: asset.eip712Version,
       assetSymbol: asset.symbol,
       chainId: config.x402.chainId,
       humanAmount: priceUsdt,
+      decimals: asset.decimals,
     },
   }];
   return { x402Version: X402_VERSION, resource, accepts };
