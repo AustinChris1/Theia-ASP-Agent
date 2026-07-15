@@ -3,7 +3,7 @@
     "name": "Theia Confluence Signal",
     "description": "Full confluence-scored trade read for any listed token: side, strength tier, confidence, scored reasons, and a complete trade plan with entry, stop, TP1-3 and leverage.\nProvide: 1. token symbol (e.g. BTC). Optional: 2. side bias LONG or SHORT.",
     "type": "A2MCP",
-    "fee": "0.10",
+    "fee": "0.05",
     "endpoint": "https://theia-asp.onrender.com/skills/theia_signal"
   },
   {

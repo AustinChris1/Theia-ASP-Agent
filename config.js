@@ -30,7 +30,7 @@ export const X_LAYER = {
 };
 
 export const SKILL_PRICES_USDT = {
-  theia_signal: str('PRICE_SIGNAL', '0.10'),
+  theia_signal: str('PRICE_SIGNAL', '0.05'),
   theia_manipulation_check: str('PRICE_MANIPULATION', '0.05'),
   theia_cex_flow: str('PRICE_CEX_FLOW', '0.05'),
   theia_insider_scan: str('PRICE_INSIDER', '0.05'),
