@@ -1,11 +1,12 @@
 # Render Blueprint for the Theia ASP. Set all secrets in the Render dashboard
 # (Environment), never here. Full list is in .env.example.
+# Region is singapore so the host reaches OKX directly (no relay needed).
 services:
   - type: web
     name: theia-asp
     runtime: node
     plan: starter
-    region: oregon
+    region: singapore
     buildCommand: npm install
     startCommand: node server.js
     healthCheckPath: /health
@@ -16,15 +17,15 @@ services:
       # Public HTTPS URL of this service (permanent on-chain once registered).
       - key: ASP_PUBLIC_URL
         sync: false
-      # Market-data keys for real reads (fresh, ASP-only).
+      # OKX reachable directly from Singapore; no relay needed.
+      - key: ASP_ENABLE_OKX_MARKET_DATA
+        value: "1"
+      # Market-data keys (neutral aggregators + on-chain).
+      - key: COINGECKO_API_KEY
+        sync: false
       - key: COINALYZE_API_KEY
         sync: false
       - key: MORALIS_API_KEY
-        sync: false
-      # Optional Singapore relay for geo-blocked Binance/Bybit data.
-      - key: RELAY_BASE_URL
-        sync: false
-      - key: BYBIT_PROXY_SECRET
         sync: false
       # x402 settlement (keep 0 until payTo + asset + facilitator are set).
       - key: X402_ENFORCE

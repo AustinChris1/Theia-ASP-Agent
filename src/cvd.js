@@ -1,20 +1,4 @@
-// CVD (Cumulative Volume Delta) veto for momentum entries.
-//
-// The #1 cause of stop-outs in the live audit was WRONG-DIRECTION entries — 49%
-// of losses barely moved the right way before reversing. The classic tell of a
-// fake breakout is "price up but no real buying": the candle is green, but the
-// aggressive (market-order) flow is net SELLING into it. CVD measures exactly
-// that — taker-buy volume minus taker-sell volume.
-//
-// Source is OKX (no competitor exchange): the rubik taker-volume endpoint gives
-// per-bar taker buy/sell volume for CVD, and 1m candles give the price move.
-// Computed ON DEMAND when a momentum signal is about to fire, then briefly cached.
-// FAIL-OPEN: any fetch/parse problem returns veto=false, so a blip never silences it.
-//
-// Veto rule (only the trade's OWN side, only on CLEAR divergence):
-//   • LONG  fired on a price rise, but net taker delta is SELLING  → fakeout → veto
-//   • SHORT fired on a price drop, but net taker delta is BUYING   → fakeout → veto
-// Agreement (or weak/no divergence) never vetoes.
+// CVD veto: reject a momentum entry when taker flow diverges from the price move (fakeout). Opt-in, fail-open. Source: OKX rubik taker-volume + 1m candles.
 import { OkxClient } from './okx.js';
 
 const cache = new Map();   // `${base}|${bars}` → { ts, result }
@@ -29,8 +13,7 @@ function okxFromEnv(override = {}) {
   });
 }
 
-// Returns { veto, reason, priceChangePct, cvdRatio, netDeltaUsd, totalUsd, bars }.
-// veto is true only on clear price↔flow divergence against `side`.
+// Returns { veto, reason, priceChangePct, cvdRatio, netDeltaUsd, totalUsd, bars }; veto only on clear divergence.
 export async function cvdVeto({ symbol, side, bars, minMovePct, opposeRatio, ttlMs = 30_000, ...override } = {}) {
   if (process.env.CVD_VETO !== '1') return { veto: false, reason: 'disabled' };   // OPT-IN (default OFF)
   const base = String(symbol || '').toUpperCase().replace(/USDT$/, '');
@@ -88,8 +71,7 @@ function decide(r, side, minMove, oppose) {
   return { veto: false, ...r };
 }
 
-// Test seam: exported pure decision so the veto logic is unit-testable without
-// network. Same rule as decide().
+// Test seam: pure decision, unit-testable without network (same rule as decide()).
 export function cvdDecision({ priceChangePct, cvdRatio, side, minMovePct = 0.4, opposeRatio = 0.06 }) {
   return decide({ priceChangePct, cvdRatio, reason: 'ok', bars: 0 }, String(side).toUpperCase(), minMovePct, opposeRatio).veto;
 }

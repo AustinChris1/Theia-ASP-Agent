@@ -1,9 +1,7 @@
-// OKX v5 public market-data client (candles, funding, open interest, instruments).
-// Reachability-agnostic: hits www.okx.com directly, an OKX_BASE_URL override, or the
-// relay (/okx prefix) when the host is geo-blocked. Every fetch carries a timeout.
+// OKX v5 public market-data client. Base: www.okx.com direct, OKX_BASE_URL, or the relay's /okx prefix.
 const DEFAULT_HOST = 'https://www.okx.com';
 
-// Coinalyze/engine TF interval -> OKX candle bar.
+// Engine TF interval -> OKX candle bar.
 export const OKX_BAR = {
   '1min': '1m', '5min': '5m', '15min': '15m', '30min': '30m',
   '1hour': '1H', '4hour': '4H', 'daily': '1D', '1week': '1W',
@@ -30,13 +28,11 @@ export class OkxClient {
     const res = await fetch(`${this.base}/api/v5${path}`, opts);
     if (!res.ok) return null;
     const j = await res.json();
-    // OKX wraps everything as { code:"0", data:[...] }; code!="0" is an API error.
-    if (j?.code !== undefined && j.code !== '0') return null;
+    if (j?.code !== undefined && j.code !== '0') return null; // OKX wraps as { code, data }
     return j?.data ?? null;
   }
 
-  // Most-recent candles for an instrument. Returns ascending [{t(sec),o,h,l,c,v}] or null.
-  // OKX rows are NEWEST first: [ts(ms), o, h, l, c, vol, volCcy, volCcyQuote, confirm].
+  // Most-recent candles, ascending [{t(sec),o,h,l,c,v}] or null (OKX rows are newest-first).
   async getCandles(instId, bar, limit = 300) {
     if (!instId || !bar) return null;
     const lim = Math.min(Math.max(Number(limit) || 300, 1), 300);
@@ -51,8 +47,7 @@ export class OkxClient {
     return bars.sort((a, b) => a.t - b.t);
   }
 
-  // Current funding rate for a SWAP instId. Returns { fundingRate(number, per-period),
-  // nextFundingTime(ms) } or null.
+  // Current funding rate for a SWAP instId, or null.
   async getFundingRate(instId) {
     if (!instId) return null;
     const data = await this.#get(`/public/funding-rate?instId=${encodeURIComponent(instId)}`);
@@ -72,7 +67,6 @@ export class OkxClient {
   }
 
   // All USDT-SWAP tickers in one call. Map<baseSymbol, { price, pct, vol(USD) }> or null.
-  // Replaces the Bybit all-tickers feed as the engine's fast price/volume source.
   async getSwapTickers() {
     const data = await this.#get('/market/tickers?instType=SWAP');
     if (!Array.isArray(data) || data.length === 0) return null;
@@ -86,13 +80,13 @@ export class OkxClient {
       const open = Number(t.open24h);
       const pct = Number.isFinite(open) && open > 0 ? ((price - open) / open) * 100 : null;
       const volCcy = Number(t.volCcy24h);
-      const vol = Number.isFinite(volCcy) ? volCcy * price : null; // USD turnover approx
+      const vol = Number.isFinite(volCcy) ? volCcy * price : null;
       out.set(base, { price, pct, vol });
     }
     return out.size ? out : null;
   }
 
-  // L2 orderbook for an OKX instrument. Returns raw OKX rows or null.
+  // L2 orderbook for an OKX instrument, or null.
   async getOrderbook(instId, size = 400) {
     if (!instId) return null;
     const sz = Math.min(Math.max(Number(size) || 400, 1), 400);
@@ -102,7 +96,7 @@ export class OkxClient {
     return { bids: book.bids, asks: book.asks };
   }
 
-  // Current open interest for a SWAP instId. Returns { oi(contracts), oiCcy(base units), ts } or null.
+  // Current open interest for a SWAP instId, or null.
   async getOpenInterest(instId) {
     if (!instId) return null;
     const data = await this.#get(`/public/open-interest?instType=SWAP&instId=${encodeURIComponent(instId)}`);
@@ -112,8 +106,7 @@ export class OkxClient {
     return { instId: row.instId, oi: Number(row.oi) || null, oiCcy: Number.isFinite(oiCcy) ? oiCcy : null, ts: Number(row.ts) || null };
   }
 
-  // Taker buy/sell volume for a base ccy (rubik stats), for CVD. Returns ascending
-  // [{ ts, buy, sell }] or null. Units cancel in the buy-vs-sell ratio CVD uses.
+  // Taker buy/sell volume (rubik stats) for CVD, ascending [{ ts, buy, sell }] or null.
   async getTakerVolume(ccy, period = '1m', limit = 60) {
     if (!ccy) return null;
     const data = await this.#get(`/rubik/stat/taker-volume?ccy=${encodeURIComponent(ccy)}&instType=CONTRACTS&period=${period}`);
@@ -124,13 +117,12 @@ export class OkxClient {
     return rows.length ? rows.slice(-Math.max(1, limit)) : null;
   }
 
-  // List instruments of a type (e.g. SWAP). Returns the raw OKX rows or null.
+  // Raw instrument list of a type (e.g. SWAP), or null.
   async getInstruments(instType = 'SWAP') {
     return this.#get(`/public/instruments?instType=${instType}`);
   }
 
-  // Build a base-symbol -> OKX USDT-SWAP instId map from the live instrument list.
-  // e.g. BTC -> BTC-USDT-SWAP. Only USDT-margined linear perps.
+  // Map base symbol -> OKX USDT-SWAP instId (USDT-margined linear perps only).
   async buildSwapMap() {
     const rows = await this.getInstruments('SWAP');
     const map = new Map();

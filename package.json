@@ -8,7 +8,8 @@
     "start": "node server.js",
     "demo": "node demo/executor.js",
     "manifest": "node identity/build-manifest.js",
-    "test": "node test/asp-sanity.js"
+    "test": "node test/asp-sanity.js",
+    "rehearse:x402": "node test/x402-rehearsal.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
