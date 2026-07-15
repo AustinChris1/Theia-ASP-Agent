@@ -29,3 +29,13 @@ Thumbs.db
 .vscode/
 *.swp
 relay/.fly/
+
+# Internal / dev docs — kept locally, not published in the submission repo
+/CLAUDE.md
+/GUIDE.md
+/DEPLOY-RENDER.md
+/SUBMISSION.md
+/NOTES-okx.md
+/DEMO.md
+/identity/REGISTRATION.md
+/identity/services-cli.json

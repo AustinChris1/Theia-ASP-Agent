@@ -1,132 +1,102 @@
-# Theia ASP — an OKX.AI Agent Service Provider
+# Theia — crypto intelligence for agents, on OKX.AI
 
-Theia is a crypto intelligence engine (in `src/`) exposed as an **Agent Service
-Provider** on OKX.AI. Other agents pay Theia to call:
+**Theia is an Agent Service Provider (ASP) on OKX.AI.** Agents can trade, but they
+trade blind. Theia sells the intelligence: is this token being manipulated, are
+insiders distributing, where is exchange flow heading, where are the liquidations, and
+what is the confluence-scored trade plan — priced per call, paid in USDT on X Layer.
 
-- **A2MCP (pay-per-call, x402):** six skills, priced $0.02 to $0.10 in USDT on X
-  Layer, settled instantly per call.
-- **A2A (escrow):** "Theia Deep Desk", a full multi-token audit delivered as a
-  structured report, escrow-backed, released on sign-off.
+- **Live on OKX.AI:** agent `#6004` (X Layer, chainId 196)
+- **Endpoint:** `https://theia-asp.onrender.com`
+- **OKX-native:** all market data from OKX v5 · payments via x402 on X Layer · exposed as MCP tools
+- **Deterministic + auditable:** an LLM may narrate output, it never decides a trade
 
-Plus a **verifiable-alpha ledger**: Theia's real resolved-signal win-rate, hashed
-into a Merkle root anchored on X Layer, so the track record is auditable, not
-claimed.
+---
 
-The scoring engine is imported from `src/`, not rebuilt. It is deterministic and
-auditable: an LLM may narrate output but never decides a trade.
+## What it offers
 
-## The six A2MCP skills
+**Six pay-per-call skills (A2MCP, x402):**
 
-| Skill | What it returns | Price |
+| Skill | Returns | Price |
 |---|---|---|
-| `theia_signal` | Confluence side, tier, confidence, scored reasons, full trade plan (entry, SL, TP1-3, R, leverage, horizon) | $0.10 |
-| `theia_manipulation_check` | Pump-and-dump / wash-trade risk 0-100% with flags | $0.05 |
-| `theia_cex_flow` | Direction and materiality of supply into/out of exchange cold custody | $0.05 |
-| `theia_insider_scan` | Largest non-exchange insider holders + top-10 concentration | $0.05 |
-| `theia_liqmap` | Leverage-liquidation clusters above/below price by leverage | $0.05 |
-| `theia_cex_holdings` | Cornered float: cold-wallet concentration by token or exchange | $0.02 |
+| `theia_signal` | Confluence side, strength tier, confidence, scored reasons, full trade plan (entry, SL, TP1-3, R, leverage, horizon) | 0.05 USDT |
+| `theia_manipulation_check` | Pump-and-dump / wash-trade risk 0-100% with flags | 0.05 USDT |
+| `theia_cex_flow` | Direction + materiality of supply into/out of exchange custody | 0.05 USDT |
+| `theia_insider_scan` | Largest non-exchange insider holders + top-10 concentration | 0.05 USDT |
+| `theia_liqmap` | Leverage-liquidation clusters above/below price | 0.05 USDT |
+| `theia_cex_holdings` | Cornered float: cold-wallet concentration by token or exchange | 0.02 USDT |
 
-## Layout
+**One premium escrow service (A2A):** *Theia Deep Desk* — a full multi-token
+manipulation + insider + liquidation + flow audit, delivered as a structured report,
+escrow-backed, released on your sign-off.
 
-```
-server.js            HTTP host: x402-gated /skills/<name>, MCP /mcp, free /manifest /health /reputation /a2a/quote
-engine.js            headless boot of the intelligence engine (imports src/, no telegram/bot/autotrade)
-config.js            fresh env from .env only
-skills/              thin adapters over the engine, one per A2MCP skill, each schema-validated
-payments/x402.js     seller-side x402 V2 middleware (X Layer, configurable facilitator)
-a2a/deep-desk.js     A2A audit: conviction filter, multi-skill run, report, CLI hooks
-reputation/ledger.js real resolved-outcome win-rate + Merkle root + X Layer anchor
-demo/executor.js     an agent that pays theia_signal via x402 then acts (the demo loop)
-identity/            service manifest + the exact onchainos registration steps
-src/                 the imported intelligence engine (21 files)
-test/                unit suite (no live network)
-```
+**Plus a verifiable-alpha ledger:** Theia resolves every signal it fires to a real
+outcome and hashes it into a Merkle root anchored on X Layer — the win-rate is
+auditable on-chain, not claimed.
 
-The engine boots only the subsystems needed for on-demand analysis (universe,
-prices, TA, funding, liquidation heatmap, insider discovery, CEX holdings). Every
-optional subsystem degrades gracefully: a missing data key lowers one skill's
-fidelity, never crashes the server.
+## Try it
 
-## Setup
+The service is live. Free discovery routes need no payment:
 
-1. `npm install`
-2. Copy `.env.example` to `.env` and fill it in. Minimum for real reads:
-   - `RELAY_BASE_URL` + `RELAY_AUTH_SECRET` (recommended): the Fly Singapore relay in `relay/`. `okx.com` is geo-blocked from most hosts, so this is what makes OKX prices/funding/OI/candles/orderbook reachable. See `relay/README.md`.
-   - `COINALYZE_API_KEY` (neutral fallback for liquidations + TA cache): coinalyze.net, free tier
-   - `COINGECKO_API_KEY` (token universe + spot prices): coingecko.com, free demo tier
-   - `MORALIS_API_KEY` (insider/holder discovery): moralis.io, free tier
-   - `ASP_ENABLE_OKX_MARKET_DATA=0` only if you have no relay and okx.com is blocked from your IP
-   - For live x402: `X402_PAY_TO`, `X402_ASSET_USDT_ADDRESS`, `X402_FACILITATOR_URL`, `X402_ENFORCE=1`
-
-### Market data
-
-All exchange data comes from **OKX v5** (`src/okx.js`): SWAP tickers (prices), funding
-rate, open interest, candles (multi-timeframe TA), orderbook depth (liquidity
-clusters), and taker-volume (CVD). Coinalyze and CoinGecko are kept as neutral
-aggregators for liquidations, TA cache, and the token universe. Deploy the Singapore
-relay in `relay/` so a US host (or a geo-blocked local IP) can reach OKX.
-
-## Run
-
-```
-npm start          # boot the engine + start the server (default :8402)
+```bash
+curl https://theia-asp.onrender.com/health         # engine status
+curl https://theia-asp.onrender.com/               # service manifest (skills + pricing)
+curl https://theia-asp.onrender.com/reputation     # verifiable win-rate scoreboard
 ```
 
-Then:
-```
-curl localhost:8402/                              # service manifest
-curl localhost:8402/health                        # engine subsystem status
-curl localhost:8402/reputation                    # win-rate scoreboard
-curl -XPOST localhost:8402/skills/theia_signal -H 'content-type: application/json' -d '{"token":"BTC"}'
-curl -XPOST localhost:8402/a2a/quote -H 'content-type: application/json' -d '{"description":"audit BTC and ETH","budgetUsdt":20}'
+A skill call returns clean structured JSON:
+
+```bash
+curl -X POST https://theia-asp.onrender.com/skills/theia_signal \
+  -H 'content-type: application/json' -d '{"token":"BTC"}'
 ```
 
-With `X402_ENFORCE=0` (default) the skill endpoints serve free so you can develop
-and demo. With `X402_ENFORCE=1` plus a `payTo` + asset + facilitator, they return a
-402 challenge and require x402 payment.
+The same six skills are exposed as **MCP tools** over Streamable HTTP at
+`POST /mcp` (stateless — `initialize`, then `tools/list`).
 
-### MCP
+## How it works
 
-The same six skills are exposed as MCP tools over Streamable HTTP at `POST /mcp`
-(stateless). `initialize` then `tools/list` returns all six.
+A caller pays a few cents of USDT through the OKX Agentic Wallet (x402 on X Layer),
+and instantly gets back a structured, confluence-scored read. Under the hood, a
+deterministic intelligence engine pulls **OKX v5** market data (tickers, candles,
+funding, open interest, order book, taker volume) and on-chain insider/CEX-flow
+signals, then scores side, tier, confidence, reasons, and a trade plan.
 
-### Demo executor (agent-to-agent loop)
+Full technical design, data flow, and the x402 sequence are in
+**[ARCHITECTURE.md](ARCHITECTURE.md)**.
+
+## Run locally
+
+```bash
+npm install
+cp .env.example .env     # add market-data keys (see .env.example)
+npm start                # boots the engine, serves on :8402
+npm test                 # unit suite, no live network
+```
+
+A healthy boot logs `okx: N instruments mapped`, `liq-clusters self-test OK via okx`,
+and multi-timeframe TA findings.
+
+## Why OKX-native matters
+
+- **Market data:** OKX v5 for prices, funding, OI, candles, order book, and taker
+  volume (CVD). No competitor-exchange dependency.
+- **Payments:** x402 V2, `exact` scheme, USDT settlement on X Layer (196).
+- **Identity:** ERC-8004 on-chain agent (`#6004`).
+- **Discovery:** exposed as MCP tools so any MCP-native agent can call it.
+
+## Repository
 
 ```
-npm run demo -- --token BTC                       # dry-run: prints the pay/replay loop
-node demo/executor.js --token SOL --url https://theia-asp.onrender.com --live
+server.js            HTTP + MCP host, x402-gated
+engine.js            headless boot of the intelligence engine
+config.js            environment configuration
+skills/              six A2MCP skill adapters
+payments/x402.js     seller-side x402 V2 middleware
+a2a/deep-desk.js     escrow audit service
+reputation/ledger.js on-chain win-rate ledger
+src/                 the imported intelligence engine
+relay/               optional Singapore data relay
+test/                unit suite
 ```
 
-## Tests
-
-```
-npm test           # ASP adapters + x402 + reputation + A2A + engine functions (no live network)
-```
-
-## Deploy (Render)
-
-The A2MCP endpoint must be a public, permanent `https://` URL before you register
-it on-chain. Deploy this repo as a Render Web Service (see `render.yaml`):
-- Build: `npm install`
-- Start: `npm start`
-- Env: set the `.env` values as Render environment variables (config reads real env
-  vars over the file, so a committed `.env` is not needed on Render).
-- Health check path: `/health`
-
-Once `GET /health` returns 200 at your Render URL, follow
-[identity/REGISTRATION.md](identity/REGISTRATION.md).
-
-## Security
-
-- No secret is read, copied, or committed. `.env`, `logs/`, and key material are
-  gitignored. This repo is treated as a potential public submission.
-- The x402 receiving wallet key lives in the `onchainos` CLI / TEE, never in this
-  code or env.
-- Every external fetch keeps an `AbortSignal.timeout`.
-
-## Ground truth
-
-The OKX integration facts (x402 V2, X Layer 196, A2MCP vs A2A, registration,
-reputation) are documented from the installed `okx/onchainos-skills` package and
-CLI source in [NOTES-okx.md](NOTES-okx.md). Open items (facilitator URL, X Layer
-token addresses) are called out there and are config-driven.
+Requires Node >= 20. See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
