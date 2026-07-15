@@ -1,4 +1,4 @@
-// theia_insider_scan — largest non-exchange (insider/team) holders, via TeamWalletDiscovery.
+
 import { config } from '../config.js';
 import { ok, err, round, tokenStub, resolveToken, validateInput } from './common.js';
 

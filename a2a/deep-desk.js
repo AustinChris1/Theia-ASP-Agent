@@ -1,13 +1,11 @@
-// A2A premium service "Theia Deep Desk": escrow-backed multi-token audit. This module is
-// the ASP-side work brain (conviction filter, audit run, report, CLI hooks); the task
-// lifecycle itself is driven by the onchainos agent CLI. Deterministic; no LLM decides.
+
+
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { SKILLS_BY_NAME } from '../skills/index.js';
 import { config } from '../config.js';
 import { isStableSymbol } from '../src/stables.js';
 
-// paymentMode 1=escrow, 3=x402 (see NOTES-okx §5).
 export const TASK_STATUS = {
   DRAFT: -1, CREATED: 0, ACCEPTED: 1, SUBMITTED: 2, REJECTED: 3, DISPUTED: 4,
   ADMIN_STOPPED: 5, COMPLETE: 6, CLOSE: 7, EXPIRED: 8, FAILED: 9,
@@ -16,7 +14,6 @@ export const TASK_STATUS = {
 const PER_TOKEN_FLOOR_USDT = Number(process.env.DEEPDESK_PER_TOKEN_USDT ?? 2);
 const MAX_TOKENS = Number(process.env.DEEPDESK_MAX_TOKENS ?? 15);
 
-// Extract candidate tickers from free text (deterministic; no LLM).
 export function extractTokens(text) {
   if (!text) return [];
   const raw = String(text).toUpperCase().match(/\$?[A-Z0-9]{2,10}\b/g) || [];
@@ -34,7 +31,6 @@ export function extractTokens(text) {
   return out;
 }
 
-// Autonomous conviction filter: accept only jobs Theia can serve well, and scope the token set.
 export async function assessJob({ description, budgetUsdt = null }, engine) {
   const candidates = extractTokens(description).slice(0, MAX_TOKENS * 2);
   const tokens = [];
@@ -92,10 +88,9 @@ async function auditToken(sym, engine) {
   };
 }
 
-// Run the audit across a token set and assemble the deliverable.
 export async function runDeepDesk({ tokens, jobId = null, title = 'Theia Deep Desk Audit' }, engine) {
   const perToken = [];
-  for (const sym of tokens) perToken.push(await auditToken(sym, engine)); // sequential = kind to rate limits
+  for (const sym of tokens) perToken.push(await auditToken(sym, engine));
   const report = {
     provider: config.server.name,
     service: 'Theia Deep Desk',
@@ -153,7 +148,6 @@ export function writeDeliverable(report, markdown, dir = resolve(process.cwd(), 
   return { mdPath, jsonPath };
 }
 
-// onchainos CLI hooks (gas-free on X Layer). Real work + deliver are gated on job_accepted.
 export const cli = {
   apply: (jobId, priceUsdt, agentId) =>
     `onchainos agent apply ${jobId} --token-amount ${priceUsdt} --token-symbol USDT --agent-id ${agentId}`,

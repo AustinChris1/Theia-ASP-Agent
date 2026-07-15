@@ -1,4 +1,4 @@
-// ASP host: x402-gated POST /skills/<name>, MCP POST /mcp, and free discovery routes.
+
 import express from 'express';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -11,7 +11,6 @@ import { x402Gate, paymentInfo } from './payments/x402.js';
 import { scoreboard, computeLedger, anchorCommand } from './reputation/ledger.js';
 import { assessJob } from './a2a/deep-desk.js';
 
-// Map a skill's JSON input schema to a zod raw shape for MCP tools.
 function zodShapeFor(skill) {
   const shape = {};
   for (const [key, spec] of Object.entries(skill.inputSchema?.properties || {})) {
@@ -26,7 +25,6 @@ function zodShapeFor(skill) {
   return shape;
 }
 
-// Fresh MCP server exposing the six skills (stateless, per request).
 function buildMcpServer(engine) {
   const server = new McpServer({ name: `${config.server.name}-asp`, version: '1.0.0' });
   for (const skill of SKILLS) {
@@ -67,13 +65,11 @@ export function createApp(engine) {
     engineStatus: engine?.status ?? null,
   });
 
-  // Free discovery.
   app.get('/', (_req, res) => res.json(manifest()));
   app.get('/manifest', (_req, res) => res.json(manifest()));
   app.get('/.well-known/x402', (_req, res) => res.json(paymentInfo()));
   app.get('/health', (_req, res) => res.json({ ok: true, provider: config.server.name, status: engine?.status ?? null }));
 
-  // Verifiable-alpha scoreboard (free). ?full=1 returns the per-signal leaves + anchor cmd.
   app.get('/reputation', async (req, res) => {
     try {
       if (req.query.full === '1') {
@@ -86,7 +82,6 @@ export function createApp(engine) {
     }
   });
 
-  // A2A Deep Desk quote (free): conviction filter + scope. Full audit runs post-escrow via the CLI.
   app.post('/a2a/quote', async (req, res) => {
     try {
       const { description, budgetUsdt } = req.body || {};
@@ -97,7 +92,6 @@ export function createApp(engine) {
     }
   });
 
-  // x402-gated skill endpoints (the monetized A2MCP surface).
   for (const skill of SKILLS) {
     app.post(
       `/skills/${skill.name}`,
@@ -113,7 +107,6 @@ export function createApp(engine) {
     );
   }
 
-  // MCP endpoint (stateless Streamable HTTP).
   app.post('/mcp', async (req, res) => {
     let transport;
     let server;

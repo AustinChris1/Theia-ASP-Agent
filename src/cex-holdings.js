@@ -1,32 +1,14 @@
-// Snapshot ERC20 balances held by labeled CEX cold wallets for a given token.
-//
-// Why "cold-only": hot wallets are constantly churning user deposits/withdrawals
-// — their balance is noise. A cold-wallet balance reflects what the exchange
-// is *deliberately holding off-market*. A rising cold balance over time is
-// distribution pressure latent in the system; a draining cold balance often
-// precedes a price move.
-//
-// Strategy:
-//   • For each chain (ETH, BSC), call ERC20.balanceOf(coldWallet) for every
-//     labeled cold address via eth_call → aggregated per exchange.
-//   • Multi-RPC failover (same pool as on-chain monitor).
-//   • Short TTL cache (5 min) so repeated /analyze calls don't hammer RPCs.
+
 
 const BALANCE_OF_SELECTOR = '0x70a08231';
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-// ── Multicall3 (same address on ETH/BSC/Base) ───────────────────────────────
-// Batches hundreds of balanceOf/decimals reads into ONE eth_call, so the per-CEX
-// holdings leaderboard costs ~a dozen RPC calls instead of thousands. Hand-rolled
-// ABI codec (no ethers dependency) — verified against live mainnet balances.
 const MULTICALL3 = '0xcA11bde05977b3631167028862bE2a173976CA11';
-const BAL_SEL = '70a08231';        // balanceOf(address)
-const DEC_SEL = '313ce567';        // decimals()
+const BAL_SEL = '70a08231';
+const DEC_SEL = '313ce567';
 const pad64 = (h) => h.replace(/^0x/, '').toLowerCase().padStart(64, '0');
 const word = (n) => BigInt(n).toString(16).padStart(64, '0');
 
-// aggregate3((address target,bool allowFailure,bytes callData)[]) — selector 82ad56cb.
-// `calls`: [{ target, callData }] (callData = hex, no 0x). Variable-length callData ok.
 function encodeAggregate3(calls) {
   const N = calls.length;
   const tuples = calls.map(c => {
@@ -34,12 +16,11 @@ function encodeAggregate3(calls) {
     const padded = cd.padEnd(Math.ceil(cd.length / 64) * 64, '0');
     return pad64(c.target) + word(1) + word(0x60) + word(cd.length / 2) + padded;
   });
-  let heads = '', tails = '', cursor = 32 * N;   // element-head region is N words
+  let heads = '', tails = '', cursor = 32 * N;
   for (const t of tuples) { heads += word(cursor); cursor += t.length / 2; tails += t; }
   return '0x82ad56cb' + word(0x20) + word(N) + heads + tails;
 }
 
-// Decode aggregate3 return (bool success, bytes returnData)[] → [{ success, value:BigInt }].
 function decodeAggregate3(hex) {
   const d = (hex ?? '').replace(/^0x/, '');
   if (d.length < 128) return [];
@@ -58,14 +39,11 @@ function decodeAggregate3(hex) {
 
 export class CexHoldings {
   constructor({ rpcsByChain, walletsByChain, cacheTtlMs = 5 * 60_000 }) {
-    this.rpcsByChain = rpcsByChain;             // { ethereum: [...], bsc: [...] }
+    this.rpcsByChain = rpcsByChain;
     this.rpcIndexByChain = { ethereum: 0, bsc: 0 };
     this.cacheTtlMs = cacheTtlMs;
-    this.cache = new Map();                     // `${chain}|${tokenAddr}` → { ts, result }
+    this.cache = new Map();
 
-    // Cold wallets now come from the unified `evm` set (same addresses across all
-    // EVM chains). We still query per chain, using the token's per-chain contract
-    // address, so a cold wallet's balance is read on whichever chain the token lives.
     this.coldByChain = { ethereum: [], bsc: [] };
     const evmWallets = walletsByChain?.evm ?? {};
     for (const [exchange, sides] of Object.entries(evmWallets)) {
@@ -76,10 +54,8 @@ export class CexHoldings {
       }
     }
 
-    // Per-CEX top-holdings leaderboard (computed by a background job, cached here +
-    // in Neon). decimalsCache avoids re-reading a token's decimals every refresh.
-    this.leaderboard = null;                    // { computedAt, byExchange: { binance:[{symbol,cgId,amount,usd,pctSupply}], ... } }
-    this.decimalsCache = new Map();             // `${chain}|${addr}` → decimals
+    this.leaderboard = null;
+    this.decimalsCache = new Map();
   }
 
   getLeaderboard() { return this.leaderboard; }
@@ -121,8 +97,6 @@ export class CexHoldings {
     throw lastErr ?? new Error('all RPCs failed');
   }
 
-  // Aggregate cold-wallet balances per exchange for a token on a given chain.
-  // Returns: [{ exchange, balance, walletCount }, ...] sorted by balance desc.
   async #balancesForChain(chain, tokenAddr, decimals) {
     const wallets = this.coldByChain[chain] ?? [];
     if (wallets.length === 0) return [];
@@ -153,14 +127,6 @@ export class CexHoldings {
     return [...perExchange.values()].sort((a, b) => b.balance - a.balance);
   }
 
-  // Snapshot every chain we know about for a token. Returns:
-  //   {
-  //     ethereum: [{exchange, balance, walletCount}, ...],
-  //     bsc:      [...],
-  //     totalUsd: number,
-  //     totalBalance: number,
-  //     pctOfSupply: number|null
-  //   }
   async snapshot({ tokenInfo, price, circulatingSupply }) {
     const cacheKey = `${tokenInfo.coingeckoId}`;
     const cached = this.cache.get(cacheKey);
@@ -193,8 +159,6 @@ export class CexHoldings {
     return out;
   }
 
-  // Batch balanceOf/decimals reads via Multicall3 → array of BigInt values aligned
-  // with `calls` ({target, callData}). Chunked so one huge eth_call can't time out.
   async #multicall(chain, calls, chunkSize = 300) {
     const out = new Array(calls.length).fill(0n);
     for (let i = 0; i < calls.length; i += chunkSize) {
@@ -208,8 +172,6 @@ export class CexHoldings {
     return out;
   }
 
-  // Resolve decimals for a set of token contracts on a chain (cache-first, then a
-  // single multicall for the unknowns). Correct decimals matter for %-of-supply.
   async #resolveDecimals(chain, tokens) {
     const need = [];
     for (const t of tokens) {
@@ -225,17 +187,13 @@ export class CexHoldings {
       const vals = await this.#multicall(chain, need.map(n => ({ target: n.target, callData: DEC_SEL })));
       for (let i = 0; i < need.length; i++) {
         const d = Number(vals[i]);
-        this.decimalsCache.set(need[i].key, (d >= 0 && d <= 36) ? d : 18);   // sane fallback
+        this.decimalsCache.set(need[i].key, (d >= 0 && d <= 36) ? d : 18);
       }
     }
   }
 
-  // Compute the per-CEX holdings leaderboard over a bounded token set. Ranks each
-  // exchange's tokens by % of circulating supply held (the actionable "cornered
-  // float" view, not USD which is just BTC/ETH/stables). Returns { computedAt,
-  // byExchange }. tokens: [{ cgId, symbol, chains, circulatingSupply, price }].
   async computeLeaderboard({ tokens, topN = 20, chunkSize = 300 }) {
-    const perEx = new Map();                    // exchange → Map(cgId → { amount, token })
+    const perEx = new Map();
     for (const chain of ['ethereum', 'bsc']) {
       const cold = this.coldByChain[chain] ?? [];
       if (!cold.length) continue;
@@ -269,7 +227,7 @@ export class CexHoldings {
         const circ = token.circulatingSupply;
         const pctSupply = circ > 0 ? (amount / circ) * 100 : null;
         const usd = token.price ? amount * token.price : null;
-        // Drop obvious bad reads (a wrong-decimals token can show >100% of supply).
+
         if (pctSupply != null && pctSupply > 100.5) continue;
         rows.push({ symbol: token.symbol, cgId: token.cgId, amount, usd, pctSupply });
       }

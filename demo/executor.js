@@ -1,7 +1,5 @@
-// Executor agent demo: calls theia_signal, pays with x402 via the OKX Agentic Wallet, reads
-// the signal, and acts on it. Dry-run by default (prints the onchainos commands); --live pays.
-//   node demo/executor.js --token BTC
-//   node demo/executor.js --token SOL --url https://theia-asp.onrender.com --live --execute
+
+
 import { spawnSync } from 'node:child_process';
 
 const args = process.argv.slice(2);
@@ -35,13 +33,13 @@ async function post(url, headers = {}) {
     signal: AbortSignal.timeout(30000),
   });
   const text = await res.text();
-  let json = null; try { json = JSON.parse(text); } catch { /* non-json */ }
+  let json = null; try { json = JSON.parse(text); } catch {  }
   return { status: res.status, headers: res.headers, json, text };
 }
 
 function decodeChallenge(res) {
   const b64 = res.headers.get('PAYMENT-REQUIRED');
-  if (b64) { try { return JSON.parse(Buffer.from(b64, 'base64').toString('utf8')); } catch { /* fall through */ } }
+  if (b64) { try { return JSON.parse(Buffer.from(b64, 'base64').toString('utf8')); } catch {  } }
   return res.json?.accepts ? { x402Version: res.json.x402Version, accepts: res.json.accepts } : null;
 }
 
@@ -93,7 +91,7 @@ async function main() {
     res = await post(SKILL_URL, { 'PAYMENT-SIGNATURE': authHeader });
     if (res.status !== 200) { log(`    -> replay failed (${res.status}): ${res.text.slice(0, 200)}`); process.exit(1); }
     const settle = res.headers.get('PAYMENT-RESPONSE');
-    if (settle) { try { log(`    -> settled: ${JSON.stringify(JSON.parse(Buffer.from(settle, 'base64').toString('utf8')))}`); } catch { /* ignore */ } }
+    if (settle) { try { log(`    -> settled: ${JSON.stringify(JSON.parse(Buffer.from(settle, 'base64').toString('utf8')))}`); } catch {  } }
     return showSignalAndAct(res.json);
   }
   log(`    -> (dry-run) would resend with PAYMENT-SIGNATURE and receive the signal JSON.`);

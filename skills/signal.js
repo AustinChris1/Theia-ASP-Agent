@@ -1,4 +1,4 @@
-// theia_signal — full confluence-scored signal, backed by conductor.evaluateForAnalysis.
+
 import { config } from '../config.js';
 import { ok, err, round, tokenStub, validateInput } from './common.js';
 

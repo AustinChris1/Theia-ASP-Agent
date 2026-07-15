@@ -1,20 +1,14 @@
-// Dress-rehearsal for the LIVE x402 path. Boots the server with X402_ENFORCE=1
-// against a mock facilitator + stub engine, and drives the full flow:
-//   unpaid -> 402 challenge -> pay -> replay -> 200 + settlement.
-// Validates the 402 challenge matches the OKX/x402 V2 wire format so
-// `onchainos agent x402-check` passes on the deployed endpoint.
-// Run: npm run rehearse:x402   (standalone; not part of `npm test`)
+
+
 import http from 'node:http';
 
-// 1. Configure env BEFORE importing config/server (config reads env at import).
 process.env.X402_ENFORCE = '1';
 process.env.X402_PAY_TO = '0x000000000000000000000000000000000000dEaD';
-process.env.X402_ASSET_USDT_ADDRESS = '0x1E4a5963aBFD975d8c9021ce480b42188849D41d'; // placeholder X Layer USDT
+process.env.X402_ASSET_USDT_ADDRESS = '0x1E4a5963aBFD975d8c9021ce480b42188849D41d';
 process.env.X402_ASSET_USDT_DECIMALS = '6';
 process.env.X402_DEFAULT_ASSET = 'USDT';
-process.env.ASP_PUBLIC_URL = 'http://localhost'; // resource base
+process.env.ASP_PUBLIC_URL = 'http://localhost';
 
-// 2. Mock facilitator (stateful: `mode` toggles verify accept/reject).
 let facilMode = 'ok';
 const seen = { verify: 0, settle: 0 };
 const facil = http.createServer((req, res) => {
@@ -40,11 +34,9 @@ const facil = http.createServer((req, res) => {
 await new Promise((r) => facil.listen(0, r));
 process.env.X402_FACILITATOR_URL = `http://localhost:${facil.address().port}`;
 
-// 3. Import after env is set.
 const { createApp } = await import('../server.js');
 const { x402Mode } = await import('../payments/x402.js');
 
-// Stub engine so the skill returns 200 after payment without live OKX.
 const stubEngine = {
   status: { ta: true, funding: 'coinalyze' },
   analyze: async () => ({
@@ -66,13 +58,11 @@ console.log('\nx402 live-enforcement dress-rehearsal\n');
 
 ok(x402Mode() === 'facilitator', 'mode = facilitator (enforce on + facilitator configured)');
 
-// A. Free routes still open under enforcement.
 const health = await fetch(`${base}/health`);
 ok(health.status === 200, 'GET /health stays free under enforcement');
 const manifest = await (await fetch(`${base}/`)).json();
 ok(manifest.payment.mode === 'facilitator', 'manifest advertises payment.mode = facilitator');
 
-// B. Unpaid skill call -> 402 challenge.
 const r1 = await post('/skills/theia_signal');
 ok(r1.status === 402, 'unpaid call returns HTTP 402');
 const prHeader = r1.headers.get('PAYMENT-REQUIRED');
@@ -89,7 +79,6 @@ ok(a.extra?.humanAmount === '0.10' && a.extra?.assetSymbol === 'USDT', 'extra ca
 ok(typeof a.resource === 'string' && a.resource.endsWith('/skills/theia_signal'), 'accepts.resource points at the skill');
 ok(a.maxTimeoutSeconds > 0, 'accepts.maxTimeoutSeconds set');
 
-// C. Paid replay (PAYMENT-SIGNATURE) -> facilitator verify+settle -> 200 + PAYMENT-RESPONSE.
 const payment = Buffer.from(JSON.stringify({ scheme: 'exact', network: 'eip155:196', payload: { signature: '0xsig', authorization: { from: '0xBuyer' } } }), 'utf8').toString('base64');
 facilMode = 'ok';
 const r2 = await post('/skills/theia_signal', { 'PAYMENT-SIGNATURE': payment });
@@ -102,7 +91,6 @@ ok(settle.success === true && settle.transaction === '0xdeadbeef', 'PAYMENT-RESP
 const body2 = await r2.json();
 ok(body2.ok === true && body2.data?.side === 'LONG', 'skill JSON returned after payment');
 
-// D. Facilitator rejects the payment -> 402 again (no settle).
 facilMode = 'reject';
 const settleBefore = seen.settle;
 const r3 = await post('/skills/theia_signal', { 'PAYMENT-SIGNATURE': payment });

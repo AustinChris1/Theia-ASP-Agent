@@ -1,11 +1,10 @@
-// Emit the OKX service array for `onchainos agent create --service '<json>'`, in sync
-// with the skill registry. Run: node identity/build-manifest.js [--compact]
+
+
 import { SKILLS } from '../skills/index.js';
 import { config } from '../config.js';
 
 const base = config.server.publicUrl.replace(/\/$/, '');
 
-// On-chain listing metadata per skill (name 5-30 chars; description = capability + what to provide).
 const META = {
   theia_signal: {
     name: 'Theia Confluence Signal',
@@ -56,7 +55,7 @@ const a2aService = {
     'A full escrow-backed audit across a token set: manipulation risk, insider distribution, CEX flow, cornered float, and liquidation magnets, delivered as a structured report and released on your sign-off.\n' +
     'Provide: 1. the list of token symbols. 2. what you want assessed. 3. the budget.',
   type: 'A2A',
-  fee: '', // negotiated; may be left empty
+  fee: '',
 };
 
 const services = [...a2mcpServices, a2aService];

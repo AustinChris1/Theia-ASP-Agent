@@ -1,5 +1,5 @@
-// Headless boot of Theia's engine for the ASP: imports src/, wires only the
-// subsystems needed for on-demand analysis, degrades gracefully on missing keys.
+
+
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
@@ -48,7 +48,6 @@ async function _boot() {
   const rpcs = loadJson('./config/rpcs.json');
   const pinned = loadJson('./config/tokens.json');
 
-  // Universe (required): resolves symbol -> cgId + metadata.
   const universe = new Universe({
     topN: ec.universeTopN,
     topByVolume: ec.universeVolumeTopN,
@@ -59,14 +58,10 @@ async function _boot() {
   status.universe = true;
   log(`universe built (top ${ec.universeTopN}, ${pinned.length} pinned)`);
 
-  // OKX v5 client: the primary exchange source (prices, funding, OI, candles,
-  // orderbook). Reachable direct or via the /okx relay. Disable with
-  // ASP_ENABLE_OKX_MARKET_DATA=0 where okx.com is fully blocked and no relay is set.
   const okx = ec.enableOkxMarketData
     ? new OkxClient({ baseUrl: ec.okxBaseUrl, relayBaseUrl: ec.relayBaseUrl, relayAuthSecret: ec.relayAuthSecret })
     : null;
 
-  // Prices (required): OKX SWAP tickers as the fast feed, CoinGecko for the rest.
   const prices = new PriceMonitor({
     universe,
     surgePct: 100,
@@ -98,11 +93,6 @@ async function _boot() {
   let liquidationHeatmap = null;
   let sharedCoinalyze = null;
 
-  // Funding/OI is OKX-first: the Coinalyze poll (neutral aggregator) is the cache
-  // fallback, and the OKX on-demand gap-filler is primary per analyzed token.
-  // OKX is the only exchange source.
-
-  // Coinalyze -> TA / funding cache / liquidation heatmap.
   if (ec.coinalyzeApiKey) {
     try {
       sharedCoinalyze = new CoinalyzeClient({
@@ -123,7 +113,6 @@ async function _boot() {
           })
         : sharedCoinalyze;
 
-      // Empty perp map still lets TA fall back to OKX candles; retry in the background.
       const perpMap = new Map();
       const topN = Number(process.env.ASP_PERP_TOP_N ?? 200);
       try {
@@ -184,7 +173,6 @@ async function _boot() {
     warn('no COINALYZE_API_KEY — TA + funding(fallback) + heatmap limited (signal quality degrades to price-only)');
   }
 
-  // Liquidity clusters (orderbook heatmap): optional.
   let liquidityClusters = null;
   if (taService?.perpSymbolMap && process.env.LIQUIDITY_CLUSTERS !== '0') {
     try {
@@ -198,7 +186,6 @@ async function _boot() {
     } catch (err) { warn(`liquidity clusters disabled: ${err.message}`); }
   }
 
-  // Regime monitor (BTC macro trend): optional, needs TA.
   let regimeMonitor = null;
   if (taService) {
     try {
@@ -213,7 +200,6 @@ async function _boot() {
     } catch (err) { warn(`regime monitor disabled: ${err.message}`); }
   }
 
-  // Team-wallet discovery (insider holders / concentration): optional; warmed in the background.
   let teamDiscovery = null;
   if (ec.enableTeamDiscovery) {
     try {
@@ -235,7 +221,6 @@ async function _boot() {
     } catch (err) { warn(`team discovery disabled: ${err.message}`); }
   }
 
-  // CEX cold-wallet holdings (cornered float): optional.
   let cexHoldings = null;
   try {
     cexHoldings = new CexHoldings({
@@ -245,7 +230,6 @@ async function _boot() {
     status.cexHoldings = true;
   } catch (err) { warn(`cex holdings disabled: ${err.message}`); }
 
-  // onchainSources=[] on-demand skills use teamDiscovery/cexHoldings directly; no live flow feed.
   const conductor = new Conductor({
     universe,
     onchainSources: [],
@@ -263,7 +247,6 @@ async function _boot() {
     levRiskBasis: Number(process.env.LEV_RISK_BASIS ?? 2),
     verbose: ec.verbose,
   });
-  // No conductor.start() — no live event pipeline for the on-demand ASP.
 
   let signalTracker = null;
   try {
@@ -284,13 +267,13 @@ async function _boot() {
     liquidationHeatmap, liquidityClusters, teamDiscovery, cexHoldings, signalTracker,
     status,
     analyze: async (symbol, opts = {}) => {
-      // Fill funding/OI from OKX when the Coinalyze poll missed this token.
+
       if (funding?.ensureBySymbol) {
         try {
           const t = await universe.ensureBySymbol?.(symbol);
           const price = t?.coingeckoId ? (prices.getPrice?.(t.coingeckoId) ?? null) : null;
           await funding.ensureBySymbol(symbol, price);
-        } catch { /* best-effort */ }
+        } catch {  }
       }
       return conductor.evaluateForAnalysis({ symbol, allowFetch: true, ...opts });
     },

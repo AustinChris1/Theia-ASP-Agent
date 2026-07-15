@@ -1,5 +1,5 @@
-// theia_manipulation_check — NOX manipulation risk %. Mirrors conductor.#assessManipulation's
-// live-data gathering, then calls the pure assessManipulation + assessPumpRegime exports.
+
+
 import { assessManipulation, assessPumpRegime } from '../src/conductor.js';
 import { config } from '../config.js';
 import { ok, err, round, tokenStub, resolveToken, validateInput } from './common.js';
@@ -68,7 +68,6 @@ export async function run(params, engine) {
   return ok(name, data);
 }
 
-// Missing inputs simply do not score; report which legs had data.
 function coverageNote(inputs) {
   const have = [];
   const missing = [];

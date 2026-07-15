@@ -1,8 +1,4 @@
-// Shared CoinGecko helpers. Centralises the API key handling so all three
-// monitors (universe, prices, funding) authenticate consistently.
-//
-// To use, sign up for a free Demo API key at https://www.coingecko.com/en/api/pricing
-// (Demo tier: 30 calls/min, 10k/month). Set COINGECKO_API_KEY in .env.
+
 
 export const COINGECKO_BASE = 'https://api.coingecko.com/api/v3';
 
@@ -13,9 +9,6 @@ export function cgHeaders() {
   return headers;
 }
 
-// Search the public CoinGecko index by free-form query (symbol or name).
-// Returns up to `limit` coins, lightly normalized: { id, symbol, name, rank }.
-// `rank` is market_cap_rank (lower = bigger); used to sort multiple matches.
 export async function cgSearch(query, limit = 6) {
   const q = (query ?? '').trim();
   if (!q) return [];
@@ -39,7 +32,7 @@ export async function cgSearch(query, limit = 6) {
         rank: c.market_cap_rank ?? null
       }))
       .sort((a, b) => {
-        // Rank-aware sort: ranked tokens first (lowest rank wins), then unranked
+
         if (a.rank == null && b.rank == null) return 0;
         if (a.rank == null) return 1;
         if (b.rank == null) return -1;

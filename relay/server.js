@@ -1,9 +1,5 @@
-// Theia data relay: a tiny Node reverse-proxy meant to run on Fly.io in a region
-// that reaches OKX (Singapore). Routes by path prefix:
-//   /okx/*       -> https://www.okx.com        (tickers, funding, OI, candles, orderbook)
-//   /coinalyze/* -> https://api.coinalyze.net  (neutral liquidation + TA fallback)
-//   everything else -> https://www.okx.com
-// Gated by X-Proxy-Auth so the URL can't be abused as an open proxy.
+
+
 import http from 'node:http';
 
 const PORT = Number(process.env.PORT || 8080);
@@ -16,7 +12,6 @@ const ROUTES = [
 ];
 const DEFAULT_HOST = 'https://www.okx.com';
 
-// Drop hop-by-hop + our gate + accept-encoding (so upstream returns uncompressed).
 const REQ_STRIP = new Set(['host', 'connection', 'content-length', 'x-proxy-auth', 'accept-encoding']);
 const RESP_STRIP = new Set(['content-encoding', 'transfer-encoding', 'content-length', 'connection']);
 
@@ -62,7 +57,6 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-// Only listen when run directly (import for tests without binding a port).
 if (process.argv[1] && process.argv[1].endsWith('server.js')) {
   server.listen(PORT, () => console.log(`[relay] listening on :${PORT} region=${process.env.FLY_REGION || '?'}`));
 }

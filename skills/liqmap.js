@@ -1,4 +1,4 @@
-// theia_liqmap — leverage-liquidation heatmap, via LiquidationHeatmap.
+
 import { config } from '../config.js';
 import { ok, err, round, tokenStub, resolveToken, validateInput } from './common.js';
 
@@ -53,7 +53,6 @@ export async function run(params, engine) {
     return err(name, 'no_perp_coverage', `No perp/OI coverage for ${u.symbol} to build a liquidation map.`);
   }
 
-  // longLiqs sit below price, shortLiqs above.
   const below = (map.longLiqs || []).map(clusterStub).sort((a, b) => b.notionalUsd - a.notionalUsd);
   const above = (map.shortLiqs || []).map(clusterStub).sort((a, b) => b.notionalUsd - a.notionalUsd);
 

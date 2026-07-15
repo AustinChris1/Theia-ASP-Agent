@@ -1,12 +1,11 @@
-// Seller-side x402 V2: emit a 402 challenge for X Layer USDT, then verify+settle
-// the replay via a configurable facilitator. Modes: off / declare / facilitator.
+
+
 import { config, activeAsset } from '../config.js';
 
 const X402_VERSION = 1;
 const TRUST_UNVERIFIED = process.env.X402_TRUST_UNVERIFIED === '1';
 const NETWORK = process.env.X402_NETWORK || config.x402.network;
 
-// Human decimal string -> atomic base units.
 export function toBaseUnits(decimalStr, decimals) {
   const s = String(decimalStr).trim();
   if (!/^\d+(\.\d+)?$/.test(s)) throw new Error(`invalid amount: ${decimalStr}`);
@@ -55,7 +54,6 @@ function send402(res, payload, extra = {}) {
   res.json({ x402Version: X402_VERSION, error: 'payment_required', ...extra, accepts: payload.accepts, resource: payload.resource });
 }
 
-// Standard x402 facilitator: POST /verify then /settle. Fetches carry AbortSignal timeouts.
 export async function settleViaFacilitator({ paymentB64, payload }) {
   const base = config.x402.facilitatorUrl.replace(/\/$/, '');
   let paymentPayload;
@@ -88,7 +86,6 @@ export async function settleViaFacilitator({ paymentB64, payload }) {
   }
 }
 
-// Express middleware: gate one route with an x402 price.
 export function x402Gate({ priceUsdt, description }) {
   return async function gate(req, res, next) {
     const mode = x402Mode();
@@ -97,7 +94,6 @@ export function x402Gate({ priceUsdt, description }) {
     const resource = `${config.server.publicUrl.replace(/\/$/, '')}${req.baseUrl || ''}${req.path}`;
     const payload = buildPaymentRequired({ resource, priceUsdt, description });
 
-    // Accept PAYMENT-SIGNATURE (v2), X-PAYMENT (v1), or Authorization: Payment (charge).
     const paymentB64 = req.get('PAYMENT-SIGNATURE')
       || req.get('X-PAYMENT')
       || (req.get('Authorization')?.startsWith('Payment ') ? req.get('Authorization').slice('Payment '.length) : null);
@@ -113,7 +109,6 @@ export function x402Gate({ priceUsdt, description }) {
       return next();
     }
 
-    // declare mode: no facilitator; refuse unverifiable payment unless demo-only trust flag is set.
     if (TRUST_UNVERIFIED) {
       res.set('X-Payment-Warning', 'accepted without verification (X402_TRUST_UNVERIFIED=1, demo only)');
       return next();

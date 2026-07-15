@@ -1,7 +1,6 @@
-// OKX v5 public market-data client. Base: www.okx.com direct, OKX_BASE_URL, or the relay's /okx prefix.
+
 const DEFAULT_HOST = 'https://www.okx.com';
 
-// Engine TF interval -> OKX candle bar.
 export const OKX_BAR = {
   '1min': '1m', '5min': '5m', '15min': '15m', '30min': '30m',
   '1hour': '1H', '4hour': '4H', 'daily': '1D', '1week': '1W',
@@ -28,11 +27,10 @@ export class OkxClient {
     const res = await fetch(`${this.base}/api/v5${path}`, opts);
     if (!res.ok) return null;
     const j = await res.json();
-    if (j?.code !== undefined && j.code !== '0') return null; // OKX wraps as { code, data }
+    if (j?.code !== undefined && j.code !== '0') return null;
     return j?.data ?? null;
   }
 
-  // Most-recent candles, ascending [{t(sec),o,h,l,c,v}] or null (OKX rows are newest-first).
   async getCandles(instId, bar, limit = 300) {
     if (!instId || !bar) return null;
     const lim = Math.min(Math.max(Number(limit) || 300, 1), 300);
@@ -47,7 +45,6 @@ export class OkxClient {
     return bars.sort((a, b) => a.t - b.t);
   }
 
-  // Current funding rate for a SWAP instId, or null.
   async getFundingRate(instId) {
     if (!instId) return null;
     const data = await this.#get(`/public/funding-rate?instId=${encodeURIComponent(instId)}`);
@@ -58,7 +55,6 @@ export class OkxClient {
     return { instId: row.instId, fundingRate: rate, nextFundingTime: Number(row.nextFundingTime) || null };
   }
 
-  // Current last-traded price for any OKX instrument.
   async getTickerLast(instId) {
     if (!instId) return null;
     const data = await this.#get(`/market/ticker?instId=${encodeURIComponent(instId)}`);
@@ -66,7 +62,6 @@ export class OkxClient {
     return Number.isFinite(last) && last > 0 ? last : null;
   }
 
-  // All USDT-SWAP tickers in one call. Map<baseSymbol, { price, pct, vol(USD) }> or null.
   async getSwapTickers() {
     const data = await this.#get('/market/tickers?instType=SWAP');
     if (!Array.isArray(data) || data.length === 0) return null;
@@ -86,7 +81,6 @@ export class OkxClient {
     return out.size ? out : null;
   }
 
-  // L2 orderbook for an OKX instrument, or null.
   async getOrderbook(instId, size = 400) {
     if (!instId) return null;
     const sz = Math.min(Math.max(Number(size) || 400, 1), 400);
@@ -96,7 +90,6 @@ export class OkxClient {
     return { bids: book.bids, asks: book.asks };
   }
 
-  // Current open interest for a SWAP instId, or null.
   async getOpenInterest(instId) {
     if (!instId) return null;
     const data = await this.#get(`/public/open-interest?instType=SWAP&instId=${encodeURIComponent(instId)}`);
@@ -106,7 +99,6 @@ export class OkxClient {
     return { instId: row.instId, oi: Number(row.oi) || null, oiCcy: Number.isFinite(oiCcy) ? oiCcy : null, ts: Number(row.ts) || null };
   }
 
-  // Taker buy/sell volume (rubik stats) for CVD, ascending [{ ts, buy, sell }] or null.
   async getTakerVolume(ccy, period = '1m', limit = 60) {
     if (!ccy) return null;
     const data = await this.#get(`/rubik/stat/taker-volume?ccy=${encodeURIComponent(ccy)}&instType=CONTRACTS&period=${period}`);
@@ -117,12 +109,10 @@ export class OkxClient {
     return rows.length ? rows.slice(-Math.max(1, limit)) : null;
   }
 
-  // Raw instrument list of a type (e.g. SWAP), or null.
   async getInstruments(instType = 'SWAP') {
     return this.#get(`/public/instruments?instType=${instType}`);
   }
 
-  // Map base symbol -> OKX USDT-SWAP instId (USDT-margined linear perps only).
   async buildSwapMap() {
     const rows = await this.getInstruments('SWAP');
     const map = new Map();

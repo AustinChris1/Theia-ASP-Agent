@@ -1,4 +1,4 @@
-// Shared helpers for the A2MCP skill adapters: token resolution, validation, envelopes.
+
 import { config } from '../config.js';
 
 const DISCLAIMER =
@@ -15,7 +15,6 @@ export function round(x, n = 2) {
 
 export function nowIso() { return new Date().toISOString(); }
 
-// Resolve a symbol to a full universe entry (handles on-demand tokens via ensureBySymbol).
 export async function resolveToken(engine, symbol) {
   const sym = String(symbol || '').trim().toUpperCase();
   if (!sym) return null;
@@ -26,15 +25,14 @@ export async function resolveToken(engine, symbol) {
       const info = u.lookupByCgId(cgId);
       if (info && String(info.symbol || '').toUpperCase() === sym) return info;
     }
-  } catch { /* fall through */ }
+  } catch {  }
   try {
     const t = await u.ensureBySymbol?.(sym);
     if (t?.coingeckoId) return u.lookupByCgId(t.coingeckoId) || t;
-  } catch { /* unrecognized */ }
+  } catch {  }
   return null;
 }
 
-// Tiny JSON-schema-subset validator (no external dep). Coerces `token` from aliases.
 export function validateInput(schema, params) {
   const errors = [];
   const value = { ...(params || {}) };

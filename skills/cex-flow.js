@@ -1,7 +1,5 @@
-// theia_cex_flow — direction + materiality of supply into/out of CEX cold custody.
-// Snapshots current custody and diffs it against this ASP's last snapshot, so repeated
-// calls reveal net deposit (bearish staging) vs withdrawal (bullish). Streaming net-flow
-// is delivered by the A2A Deep Desk tier.
+
+
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
@@ -33,7 +31,7 @@ function writePrior(cgId, snap) {
   try {
     mkdirSync(CACHE_DIR, { recursive: true });
     writeFileSync(priorPath(cgId), JSON.stringify(snap));
-  } catch { /* best-effort */ }
+  } catch {  }
 }
 
 export async function run(params, engine) {
@@ -69,7 +67,7 @@ export async function run(params, engine) {
     const mcap = u.marketCap ?? null;
     const materialityPct = (deltaUsd != null && mcap > 0) ? Math.abs(deltaUsd) / mcap * 100 : null;
     let direction = 'flat';
-    const noise = Math.max(1, prior.totalBalance * 0.0005); // 0.05% noise floor
+    const noise = Math.max(1, prior.totalBalance * 0.0005);
     if (deltaBalance > noise) direction = 'deposit';
     else if (deltaBalance < -noise) direction = 'withdrawal';
     flow = {

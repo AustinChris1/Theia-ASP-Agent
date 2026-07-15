@@ -1,4 +1,4 @@
-// Fresh ASP config. Reads ONLY the root .env; the x402 wallet lives in the onchainos CLI/TEE, not here.
+
 import { config as loadEnv } from 'dotenv';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
@@ -22,7 +22,6 @@ const bool = (key, dflt = false) => {
   return v === '1' || v.toLowerCase() === 'true';
 };
 
-// OKX settlement chain for x402 and ERC-8004 identity/escrow.
 export const X_LAYER = {
   chainId: 196,
   network: 'eip155:196',
@@ -30,7 +29,6 @@ export const X_LAYER = {
   rpcUrl: str('X_LAYER_RPC_URL', 'https://rpc.xlayer.tech'),
 };
 
-// Cheap flat pricing ($0.02 to $0.10 USDT) to drive volume.
 export const SKILL_PRICES_USDT = {
   theia_signal: str('PRICE_SIGNAL', '0.10'),
   theia_manipulation_check: str('PRICE_MANIPULATION', '0.05'),
@@ -52,7 +50,7 @@ export const config = {
     scheme: str('X402_SCHEME', 'exact'),
     network: X_LAYER.network,
     chainId: X_LAYER.chainId,
-    // [OPEN] confirm X Layer token addresses via `onchainos wallet chains` before go-live.
+
     assets: {
       USDT: {
         address: str('X402_ASSET_USDT_ADDRESS', null),
@@ -64,16 +62,14 @@ export const config = {
       },
     },
     defaultAsset: str('X402_DEFAULT_ASSET', 'USDT'),
-    // [OPEN] OKX facilitator base URL for X Layer; confirm via `onchainos agent x402-check`.
+
     facilitatorUrl: str('X402_FACILITATOR_URL', null),
     prices: SKILL_PRICES_USDT,
     enforce: bool('X402_ENFORCE', false),
   },
 
-  // Read-only market-data keys (fresh, never the engine's money secrets).
   engine: {
-    // OKX v5 market data (candles/funding/OI). Blank = direct www.okx.com; set to a
-    // relay base if okx.com is geo-blocked from the host.
+
     enableOkxMarketData: bool('ASP_ENABLE_OKX_MARKET_DATA', true),
     okxBaseUrl: str('OKX_BASE_URL', null),
     coinalyzeApiKey: str('COINALYZE_API_KEY', null),
@@ -88,7 +84,6 @@ export const config = {
     verbose: bool('ASP_VERBOSE', false),
   },
 
-  // Publish REAL resolved outcomes to X Layer. `calldata` = self-send memo; `contract` = append-only log.
   reputation: {
     enabled: bool('REPUTATION_LEDGER_ENABLED', false),
     sink: str('REPUTATION_SINK', 'calldata'),

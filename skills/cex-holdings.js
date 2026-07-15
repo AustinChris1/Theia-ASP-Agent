@@ -1,5 +1,5 @@
-// theia_cex_holdings — exchange cold-wallet concentration (cornered float), via CexHoldings.
-// Token mode: how much supply sits in CEX cold storage. Exchange mode: its most-cornered tokens.
+
+
 import { config } from '../config.js';
 import { ok, err, round, tokenStub, resolveToken, validateInput } from './common.js';
 
@@ -25,7 +25,6 @@ export async function run(params, engine) {
   }
   const query = String(value.token).trim();
 
-  // Exchange mode: query matches an exchange in the cornered-float leaderboard.
   const lb = engine.cexHoldings.getLeaderboard?.();
   if (lb?.byExchange) {
     const match = Object.keys(lb.byExchange).find((ex) => ex.toLowerCase() === query.toLowerCase());
@@ -45,7 +44,6 @@ export async function run(params, engine) {
     }
   }
 
-  // Token mode: snapshot cold-wallet custody.
   const u = await resolveToken(engine, query);
   if (!u) {
     return err(name, 'unresolved_token',

@@ -1,11 +1,8 @@
-// test/asp-sanity.js — pure unit suite for the ASP layer. NO live network calls.
-// Skills run against a mock engine; the x402 facilitator path mocks global fetch.
-// Run: node test/asp-sanity.js
 
-// Env MUST be set before importing the ASP modules (config + x402 read env at load).
+
 process.env.X402_ENFORCE = '0';
 process.env.X402_PAY_TO = '0x000000000000000000000000000000000000dEaD';
-process.env.X402_ASSET_USDT_ADDRESS = '0x1E4a5963aBFD975d8c9021ce480b42188849D41d'; // placeholder X Layer USDT
+process.env.X402_ASSET_USDT_ADDRESS = '0x1E4a5963aBFD975d8c9021ce480b42188849D41d';
 process.env.X402_NETWORK = 'eip155:196';
 
 import { createHash } from 'node:crypto';
@@ -20,14 +17,12 @@ function ok(cond, msg) {
 }
 function eq(a, b, msg) { ok(JSON.stringify(a) === JSON.stringify(b), `${msg} (got ${JSON.stringify(a)})`); }
 
-// ── Dynamic imports after env is set ─────────────────────────────────────────
 const { config, x402Ready } = await import('../config.js');
 const { SKILLS, SKILLS_BY_NAME, skillManifest } = await import('../skills/index.js');
 const x402 = await import('../payments/x402.js');
 const ledger = await import('../reputation/ledger.js');
 const deepDesk = await import('../a2a/deep-desk.js');
 
-// ── Mock engine (no network) ─────────────────────────────────────────────────
 const BTC = { symbol: 'BTC', name: 'Bitcoin', coingeckoId: 'bitcoin', marketCap: 1.2e12, circulatingSupply: 19e6, totalSupply: 21e6, chains: {} };
 const mockEngine = {
   status: { ta: true, funding: 'coinalyze', heatmap: true, clusters: true, teamDiscovery: true, cexHoldings: true },
@@ -71,13 +66,11 @@ const mockEngine = {
     : null),
 };
 
-// ── Registry ─────────────────────────────────────────────────────────────────
 group('registry');
 eq(SKILLS.length, 6, 'six skills registered');
 ok(skillManifest().every((s) => s.name && s.priceUsdt && s.inputSchema), 'manifest entries well-formed');
 ok(['theia_signal', 'theia_manipulation_check', 'theia_cex_flow', 'theia_insider_scan', 'theia_liqmap', 'theia_cex_holdings'].every((n) => SKILLS_BY_NAME[n]), 'all six skill names present');
 
-// ── theia_signal ─────────────────────────────────────────────────────────────
 group('theia_signal');
 {
   const r = await SKILLS_BY_NAME.theia_signal.run({ token: 'BTC' }, mockEngine);
@@ -95,7 +88,6 @@ group('theia_signal');
   ok(noParam.ok === false && noParam.error.code === 'bad_request', 'signal rejects missing token');
 }
 
-// ── theia_manipulation_check ─────────────────────────────────────────────────
 group('theia_manipulation_check');
 {
   const r = await SKILLS_BY_NAME.theia_manipulation_check.run({ token: 'BTC' }, mockEngine);
@@ -107,7 +99,6 @@ group('theia_manipulation_check');
   ok(r.data.coverage.measured.length >= 1, 'manip coverage note');
 }
 
-// ── theia_insider_scan ───────────────────────────────────────────────────────
 group('theia_insider_scan');
 {
   const r = await SKILLS_BY_NAME.theia_insider_scan.run({ token: 'BTC' }, mockEngine);
@@ -117,7 +108,6 @@ group('theia_insider_scan');
   ok(r.data.insiderHolders[0].percentOfSupply >= r.data.insiderHolders[1].percentOfSupply, 'insider holders sorted desc');
 }
 
-// ── theia_liqmap ─────────────────────────────────────────────────────────────
 group('theia_liqmap');
 {
   const r = await SKILLS_BY_NAME.theia_liqmap.run({ token: 'BTC' }, mockEngine);
@@ -127,7 +117,6 @@ group('theia_liqmap');
   eq(r.data.nearestAbove.price, 63000, 'liqmap nearest above');
 }
 
-// ── theia_cex_holdings (token + exchange modes) ──────────────────────────────
 group('theia_cex_holdings');
 {
   const rTok = await SKILLS_BY_NAME.theia_cex_holdings.run({ token: 'BTC' }, mockEngine);
@@ -138,13 +127,12 @@ group('theia_cex_holdings');
   ok(rEx.data.corneredTokens[0].symbol === 'ARB', 'cex_holdings cornered token');
 }
 
-// ── theia_cex_flow (baseline then delta) ─────────────────────────────────────
 group('theia_cex_flow');
 {
   const r1 = await SKILLS_BY_NAME.theia_cex_flow.run({ token: 'BTC' }, mockEngine);
   ok(r1.ok === true, 'cex_flow ok (baseline)');
   ok(r1.data.custody.totalInColdStorage === 500, 'cex_flow custody total');
-  // Second call: custody changes -> direction populated.
+
   const engine2 = { ...mockEngine, cexHoldings: { ...mockEngine.cexHoldings, snapshot: async () => ({ ethereum: [{ address: '0xCold1', balance: 700, exchange: 'binance' }], bsc: [], totalBalance: 700, totalUsd: 4.2e7, pctOfSupply: 0.84 }) } };
   const r2 = await SKILLS_BY_NAME.theia_cex_flow.run({ token: 'BTC' }, engine2);
   ok(r2.ok === true && r2.data.flow, 'cex_flow flow populated on 2nd call');
@@ -152,7 +140,6 @@ group('theia_cex_flow');
   eq(r2.data.flow.bias, 'bearish', 'cex_flow bias bearish on deposit');
 }
 
-// ── x402: unit conversions ───────────────────────────────────────────────────
 group('x402 conversions');
 eq(x402.toBaseUnits('0.10', 6), '100000', 'toBaseUnits 0.10');
 eq(x402.toBaseUnits('0.02', 6), '20000', 'toBaseUnits 0.02');
@@ -160,7 +147,6 @@ eq(x402.toBaseUnits('1', 6), '1000000', 'toBaseUnits 1');
 eq(x402.toBaseUnits('0.000001', 6), '1', 'toBaseUnits smallest unit');
 { let threw = false; try { x402.toBaseUnits('abc', 6); } catch { threw = true; } ok(threw, 'toBaseUnits rejects garbage'); }
 
-// ── x402: buildPaymentRequired shape ─────────────────────────────────────────
 group('x402 challenge shape');
 {
   const p = x402.buildPaymentRequired({ resource: 'https://x/skills/theia_signal', priceUsdt: '0.10', description: 'test' });
@@ -175,7 +161,6 @@ group('x402 challenge shape');
   ok(a.extra && a.extra.chainId === 196, 'extra carries chainId');
 }
 
-// ── x402: gate modes (fake req/res) ──────────────────────────────────────────
 group('x402 gate modes');
 const mkReq = (headers = {}) => ({
   baseUrl: '', path: '/skills/theia_signal',
@@ -185,7 +170,6 @@ const mkRes = () => ({ statusCode: 200, headers: {}, body: null, ended: false,
   status(c) { this.statusCode = c; return this; }, set(k, v) { this.headers[k] = v; return this; },
   json(b) { this.body = b; this.ended = true; return this; } });
 
-// off mode -> next()
 config.x402.enforce = false;
 {
   const gate = x402.x402Gate({ priceUsdt: '0.10', description: 'x' });
@@ -193,7 +177,7 @@ config.x402.enforce = false;
   await gate(mkReq(), res, () => { nexted = true; });
   ok(nexted && !res.ended, 'off mode calls next (free)');
 }
-// declare mode, no payment -> 402 with PAYMENT-REQUIRED header
+
 config.x402.enforce = true; config.x402.facilitatorUrl = null;
 eq(x402.x402Mode(), 'declare', 'mode=declare when enforce + no facilitator');
 {
@@ -203,14 +187,14 @@ eq(x402.x402Mode(), 'declare', 'mode=declare when enforce + no facilitator');
   ok(!nexted && res.statusCode === 402, 'declare mode returns 402 without payment');
   ok(typeof res.headers['PAYMENT-REQUIRED'] === 'string', 'declare mode sets PAYMENT-REQUIRED header');
 }
-// declare mode, payment present but no facilitator -> 402 facilitator_not_configured
+
 {
   const gate = x402.x402Gate({ priceUsdt: '0.10', description: 'x' });
   const res = mkRes(); let nexted = false;
   await gate(mkReq({ 'PAYMENT-SIGNATURE': 'ZmFrZQ==' }), res, () => { nexted = true; });
   ok(!nexted && res.statusCode === 402 && res.body.reason === 'facilitator_not_configured', 'declare mode refuses unverifiable payment');
 }
-// facilitator mode, mocked fetch success -> next() + PAYMENT-RESPONSE header
+
 group('x402 facilitator (mocked)');
 {
   const realFetch = globalThis.fetch;
@@ -226,7 +210,7 @@ group('x402 facilitator (mocked)');
     await gate(mkReq({ 'PAYMENT-SIGNATURE': Buffer.from(JSON.stringify({ scheme: 'exact' })).toString('base64') }), res, () => { nexted = true; });
     ok(nexted, 'facilitator success calls next (paid)');
     ok(typeof res.headers['PAYMENT-RESPONSE'] === 'string', 'facilitator success sets PAYMENT-RESPONSE');
-    // failure path
+
     globalThis.fetch = async () => ({ ok: true, json: async () => ({ isValid: false, invalidReason: 'bad_sig' }) });
     const res2 = mkRes(); let nexted2 = false;
     await gate(mkReq({ 'PAYMENT-SIGNATURE': 'ZmFrZQ==' }), res2, () => { nexted2 = true; });
@@ -237,10 +221,9 @@ group('x402 facilitator (mocked)');
   }
 }
 
-// ── Reputation ledger (real outcomes only) ───────────────────────────────────
 group('reputation ledger');
 {
-  // leafFor is deterministic (same record -> same hash).
+
   const rec = { symbol: 'BTC', side: 'LONG', strength: 'HIGH', entry: 60000, sl: 58000, tp1: 62000, outcome: 'WIN_TP1', finalPnlPct: 3.3, createdAt: 1000, resolvedAt: 2000 };
   const l1 = ledger.leafFor(rec);
   const l2 = ledger.leafFor({ ...rec });
@@ -248,17 +231,15 @@ group('reputation ledger');
   const changed = ledger.leafFor({ ...rec, outcome: 'LOSS' });
   ok(changed.hash !== l1.hash, 'leaf hash changes with outcome');
 
-  // merkleRoot stable + order-independent pairing.
   const leaves = ['aa', 'bb', 'cc'].map((x) => sha(x));
   const root = ledger.merkleRoot(leaves);
   ok(/^[0-9a-f]{64}$/.test(root), 'merkleRoot is a 32-byte hex');
   ok(ledger.merkleRoot([leaves[0]]) === leaves[0], 'single leaf root = leaf');
 
-  // computeLedger uses ONLY resolved records; ignores open ones.
   const mockTracker = {
     allRecords: async () => [
       rec,
-      { symbol: 'ETH', side: 'SHORT', outcome: 'OPEN' },      // ignored (not resolved)
+      { symbol: 'ETH', side: 'SHORT', outcome: 'OPEN' },
       { symbol: 'SOL', side: 'LONG', outcome: 'LOSS', finalPnlPct: -2.0 },
     ],
     getStats: () => ({ resolved: 2, wins: 1, losses: 1, winPct: 50, byStrength: {} }),
@@ -271,16 +252,13 @@ group('reputation ledger');
   eq(sb.winRatePct, 50, 'scoreboard win rate');
   eq(sb.resolvedSignals, 2, 'scoreboard resolved count');
 
-  // Empty tracker -> honest "no data", never fabricated.
   const empty = await ledger.computeLedger({ allRecords: async () => [], getStats: () => ({}) });
   ok(empty.available === false && empty.count === 0, 'empty ledger reports no data honestly');
 
-  // anchor command shape (calldata sink default).
   const cmd = ledger.anchorCommand('deadbeef'.repeat(8), { payTo: '0xabc' });
   ok(cmd.sink === 'calldata' && cmd.command.includes('onchainos wallet send') && cmd.memoHex.startsWith('0x'), 'anchor command (calldata) well-formed');
 }
 
-// ── A2A Deep Desk ─────────────────────────────────────────────────────────────
 group('a2a deep desk');
 {
   const toks = deepDesk.extractTokens('Please audit BTC and ETH portfolio, USDT excluded, deep risk report');
@@ -303,7 +281,6 @@ group('a2a deep desk');
   ok(deepDesk.cli.deliver('task-1', '/x/r.md', '963').includes('onchainos agent deliver'), 'deliver cli command');
 }
 
-// ── Engine pure-function regression (functions the ASP depends on) ────────────
 group('engine functions');
 {
   const { assessManipulation, assessPumpRegime, enforceTpLadder } = await import('../src/conductor.js');
@@ -317,7 +294,6 @@ group('engine functions');
   ok(ladder.tp1 <= ladder.tp2 && ladder.tp2 <= ladder.tp3, 'enforceTpLadder orders a LONG ladder ascending');
 }
 
-// ── OKX v5 client (mocked fetch; no live calls) ───────────────────────────────
 group('okx client');
 {
   const { OkxClient, OKX_BAR } = await import('../src/okx.js');
@@ -365,7 +341,6 @@ group('okx client');
   global.fetch = origFetch;
 }
 
-// ── FundingMonitor OKX gap-filler (mocked; no live calls) ─────────────────────
 group('funding okx gap-filler');
 {
   const { FundingMonitor } = await import('../src/funding.js');
@@ -387,7 +362,6 @@ group('funding okx gap-filler');
   ok((await fm2.ensureBySymbol('ETH')) === null, 'no okx client returns null gracefully');
 }
 
-// ── Fly relay routing (pure fn; no port bound) ────────────────────────────────
 group('relay routing');
 {
   const { resolveTarget } = await import('../relay/server.js');
@@ -396,7 +370,6 @@ group('relay routing');
   ok(resolveTarget('/api/v5/market/tickers', '?instType=SWAP') === 'https://www.okx.com/api/v5/market/tickers?instType=SWAP', 'default route -> okx');
 }
 
-// ── Report ───────────────────────────────────────────────────────────────────
 console.log('');
 let lastGroup = '';
 for (const r of results) {

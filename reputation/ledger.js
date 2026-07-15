@@ -1,9 +1,8 @@
-// Verifiable-alpha ledger: hash REAL resolved signals into a Merkle root anchored on
-// X Layer, so the win-rate is auditable, not claimed. Only real resolved outcomes; never fabricated.
+
+
 import { createHash } from 'node:crypto';
 import { config } from '../config.js';
 
-// Canonical JSON (sorted keys) so a leaf hash is reproducible.
 function canonical(obj) {
   if (obj === null || typeof obj !== 'object') return JSON.stringify(obj);
   if (Array.isArray(obj)) return `[${obj.map(canonical).join(',')}]`;
@@ -30,7 +29,6 @@ export function leafFor(rec) {
   return { ...leaf, hash: sha256Hex(canonical(leaf)) };
 }
 
-// Order-independent binary Merkle root over leaf hashes.
 export function merkleRoot(hexLeaves) {
   if (!hexLeaves.length) return null;
   let level = hexLeaves.slice();
@@ -100,7 +98,6 @@ export async function scoreboard(signalTracker) {
   };
 }
 
-// Prepare the on-chain anchor command; the write runs through the operator's Agentic Wallet.
 export function anchorCommand(root, { payTo = config.x402.payTo } = {}) {
   if (!root) return null;
   if (config.reputation.sink === 'contract' && config.reputation.contractAddress) {

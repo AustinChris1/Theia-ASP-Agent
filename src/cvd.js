@@ -1,7 +1,7 @@
-// CVD veto: reject a momentum entry when taker flow diverges from the price move (fakeout). Opt-in, fail-open. Source: OKX rubik taker-volume + 1m candles.
+
 import { OkxClient } from './okx.js';
 
-const cache = new Map();   // `${base}|${bars}` → { ts, result }
+const cache = new Map();
 
 const env = (k, d) => { const v = process.env[k]; return v == null || v === '' ? d : v; };
 
@@ -13,20 +13,19 @@ function okxFromEnv(override = {}) {
   });
 }
 
-// Returns { veto, reason, priceChangePct, cvdRatio, netDeltaUsd, totalUsd, bars }; veto only on clear divergence.
 export async function cvdVeto({ symbol, side, bars, minMovePct, opposeRatio, ttlMs = 30_000, ...override } = {}) {
-  if (process.env.CVD_VETO !== '1') return { veto: false, reason: 'disabled' };   // OPT-IN (default OFF)
+  if (process.env.CVD_VETO !== '1') return { veto: false, reason: 'disabled' };
   const base = String(symbol || '').toUpperCase().replace(/USDT$/, '');
   const S = String(side || '').toUpperCase();
   if (!base || (S !== 'LONG' && S !== 'SHORT')) return { veto: false, reason: 'bad-args' };
 
   const N = Math.max(5, Math.min(60, Number(bars ?? env('CVD_BARS', 15))));
-  const MIN_MOVE = Number(minMovePct ?? env('CVD_MIN_PRICE_MOVE_PCT', 0.4));   // % over the window
-  const OPPOSE = Number(opposeRatio ?? env('CVD_OPPOSE_RATIO', 0.06));         // net taker delta vs volume
+  const MIN_MOVE = Number(minMovePct ?? env('CVD_MIN_PRICE_MOVE_PCT', 0.4));
+  const OPPOSE = Number(opposeRatio ?? env('CVD_OPPOSE_RATIO', 0.06));
 
   const key = `${base}|${N}`;
   const hit = cache.get(key);
-  const nowTs = hit ? null : null;   // Date.now() unavailable in some sandboxes; rely on ttl via caller cadence
+  const nowTs = hit ? null : null;
   if (hit && (Date.now() - hit.ts) < ttlMs) return decide(hit.result, S, MIN_MOVE, OPPOSE);
 
   const okx = okxFromEnv(override);
@@ -37,20 +36,20 @@ export async function cvdVeto({ symbol, side, bars, minMovePct, opposeRatio, ttl
   if (!takers || !candles || !candles.length) {
     const noData = { reason: 'no-data', priceChangePct: null, cvdRatio: null, netDeltaUsd: null, totalUsd: null, bars: N };
     cache.set(key, { ts: Date.now(), result: noData });
-    return { veto: false, ...noData };   // FAIL-OPEN
+    return { veto: false, ...noData };
   }
 
   let netDeltaUsd = 0, totalUsd = 0;
   for (const t of takers) {
     if (!isFinite(t.buy) || !isFinite(t.sell)) continue;
-    netDeltaUsd += (t.buy - t.sell);   // taker buy − sell
+    netDeltaUsd += (t.buy - t.sell);
     totalUsd += (t.buy + t.sell);
   }
   const firstOpen = candles[0].o;
   const lastClose = candles[candles.length - 1].c;
   const priceChangePct = (isFinite(firstOpen) && firstOpen > 0 && isFinite(lastClose))
     ? ((lastClose - firstOpen) / firstOpen) * 100 : null;
-  const cvdRatio = totalUsd > 0 ? netDeltaUsd / totalUsd : null;   // ∈ [-1, 1]
+  const cvdRatio = totalUsd > 0 ? netDeltaUsd / totalUsd : null;
 
   const result = { reason: 'ok', priceChangePct, cvdRatio, netDeltaUsd, totalUsd, bars: N };
   cache.set(key, { ts: Date.now(), result });
@@ -60,18 +59,17 @@ export async function cvdVeto({ symbol, side, bars, minMovePct, opposeRatio, ttl
 function decide(r, side, minMove, oppose) {
   const { priceChangePct: p, cvdRatio: c } = r;
   if (p == null || c == null) return { veto: false, ...r };
-  // LONG fired on a rise but aggressive flow is net selling → fakeout.
+
   if (side === 'LONG' && p >= minMove && c <= -oppose) {
     return { veto: true, reason: `price +${p.toFixed(2)}% but CVD ${(c * 100).toFixed(0)}% (net selling into the rally)`, ...r };
   }
-  // SHORT fired on a drop but aggressive flow is net buying → fakeout.
+
   if (side === 'SHORT' && p <= -minMove && c >= oppose) {
     return { veto: true, reason: `price ${p.toFixed(2)}% but CVD +${(c * 100).toFixed(0)}% (net buying into the drop)`, ...r };
   }
   return { veto: false, ...r };
 }
 
-// Test seam: pure decision, unit-testable without network (same rule as decide()).
 export function cvdDecision({ priceChangePct, cvdRatio, side, minMovePct = 0.4, opposeRatio = 0.06 }) {
   return decide({ priceChangePct, cvdRatio, reason: 'ok', bars: 0 }, String(side).toUpperCase(), minMovePct, opposeRatio).veto;
 }

@@ -1,4 +1,4 @@
-// A2MCP skill registry. Each skill: { name, title, description, priceUsdt, inputSchema, run }.
+
 import signal from './signal.js';
 import manipulation from './manipulation-check.js';
 import cexFlow from './cex-flow.js';
