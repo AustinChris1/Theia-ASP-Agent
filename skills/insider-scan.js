@@ -39,10 +39,14 @@ export async function run(params, engine) {
   const u = await resolveToken(engine, value.token);
   if (!u) return err(name, 'unresolved_token', `Could not resolve "${value.token}".`);
 
-  const res = engine.teamDiscovery.holdersForSymbol(u.symbol);
+  // Cached first; otherwise scan this token on demand (any ETH/BSC contract).
+  let res = engine.teamDiscovery.holdersForSymbol(u.symbol);
+  if (!res && engine.teamDiscovery.discoverSymbol) {
+    res = await engine.teamDiscovery.discoverSymbol(u.symbol).catch(() => null);
+  }
   if (!res) {
-    return err(name, 'not_discovered',
-      `No insider-holder data for ${u.symbol} yet. Discovery targets favored/hot tokens; it may not be covered or is still warming.`);
+    return err(name, 'no_onchain_contract',
+      `No insider-holder data for ${u.symbol}. Theia scans ERC-20 holders on Ethereum and BSC; ${u.symbol} has no scannable contract on those chains (native assets like BTC are expected here).`);
   }
 
   const limit = Number(value.limit) > 0 ? Math.min(Number(value.limit), 50) : 15;

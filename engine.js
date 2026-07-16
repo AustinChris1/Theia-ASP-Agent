@@ -228,6 +228,15 @@ async function _boot() {
       walletsByChain: allWallets,
     });
     status.cexHoldings = true;
+    // Cornered-float leaderboard (powers cex_holdings exchange mode). Background:
+    // it multicalls cold-wallet balances across many tokens.
+    const lbTokens = universe.allCgIds()
+      .map((id) => universe.lookupByCgId(id))
+      .filter((t) => t?.chains?.ethereum?.address || t?.chains?.bsc?.address)
+      .slice(0, Number(process.env.ASP_LEADERBOARD_TOKENS ?? 120));
+    cexHoldings.computeLeaderboard({ tokens: lbTokens })
+      .then((lb) => log(`cex leaderboard ready (${Object.keys(lb?.byExchange ?? {}).length} exchanges, ${lbTokens.length} tokens)`))
+      .catch((err) => warn(`cex leaderboard failed: ${err.message}`));
   } catch (err) { warn(`cex holdings disabled: ${err.message}`); }
 
   const conductor = new Conductor({

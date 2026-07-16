@@ -1,0 +1,144 @@
+{
+  "capturedAt": "2026-07-16T12:11:56.104Z",
+  "signal": {
+    "token": "BTC",
+    "side": "LONG",
+    "tier": "LOW",
+    "confidence": 25,
+    "price": 64162.5,
+    "reasons": [
+      {
+        "text": "Liq-heatmap magnet $155.4M short liquidations at +2.5%, fuel toward LONG TP",
+        "points": 0.9
+      },
+      {
+        "text": "RSI bullish divergence (1week) — price lower low but RSI higher low (reversal building)",
+        "points": 0.6
+      },
+      {
+        "text": "Liquidity sweep below 1week 59081 — wick took stops then bounced (bullish)",
+        "points": 0.31
+      },
+      {
+        "text": "MACD hist rising (daily)",
+        "points": 0.3
+      },
+      {
+        "text": "Bullish candle pattern (1hour)",
+        "points": 0.18
+      }
+    ],
+    "plan": {
+      "entry": 64162.5,
+      "sl": 63652.27,
+      "tp1": 64929.6,
+      "tp2": 65596,
+      "tp3": 66444.7,
+      "lev": 15,
+      "horizon": "SWING",
+      "rr1": 1.5
+    }
+  },
+  "liqmap": {
+    "token": "BTC",
+    "price": 64160,
+    "above": [
+      {
+        "price": 65755,
+        "dist": 2.5,
+        "usd": 155367236,
+        "lev": 27
+      },
+      {
+        "price": 66095,
+        "dist": 3,
+        "usd": 137891932,
+        "lev": 20
+      },
+      {
+        "price": 82478,
+        "dist": 28.6,
+        "usd": 178596788,
+        "lev": 43
+      }
+    ],
+    "below": [
+      {
+        "price": 60714,
+        "dist": -5.4,
+        "usd": 137092117,
+        "lev": 28
+      },
+      {
+        "price": 60400,
+        "dist": -5.9,
+        "usd": 97830521,
+        "lev": 36
+      },
+      {
+        "price": 59063,
+        "dist": -7.9,
+        "usd": 152896813,
+        "lev": 23
+      }
+    ],
+    "totalAbove": 6682975786,
+    "totalBelow": 3811294023
+  },
+  "insider": {
+    "token": "ARB",
+    "top10": 53,
+    "holderCount": 45,
+    "holders": [
+      {
+        "addr": "0x611f7bf868a6212f871e89f7e44684045ddfb09d",
+        "pct": 28.518
+      },
+      {
+        "addr": "0x91d40e4818f4d4c57b4578d9eca6afc92ac8debe",
+        "pct": 7.843
+      },
+      {
+        "addr": "0x0529ea5885702715e83923c59746ae8734c553b7",
+        "pct": 5.859
+      },
+      {
+        "addr": "0x92ea7496eba5f001d620005f88f3e8e686e3d4ea",
+        "pct": 3.603
+      },
+      {
+        "addr": "0xbb3c6d28def21b6297016622a57a0b05015e3ad2",
+        "pct": 1.687
+      }
+    ]
+  },
+  "manip": {
+    "token": "LAB",
+    "riskPct": 55,
+    "level": "elevated",
+    "flags": [
+      "futures 1.5× spot vol",
+      "24h vol 1.9× market cap",
+      "float 32%"
+    ],
+    "measured": {
+      "futuresToSpotRatio": 1.47,
+      "volumeToMarketCap": 1.91,
+      "circulatingFloatPct": 32
+    }
+  },
+  "manip2": {
+    "token": "MYX",
+    "riskPct": 40,
+    "level": "moderate",
+    "flags": [
+      "24h vol 79% of MC",
+      "float 19% (<25%)"
+    ],
+    "measured": {
+      "futuresToSpotRatio": null,
+      "volumeToMarketCap": 0.79,
+      "circulatingFloatPct": 19
+    }
+  }
+}

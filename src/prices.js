@@ -135,13 +135,10 @@ export class PriceMonitor extends EventEmitter {
 
     const okxActive = covered.size > 0;
 
+    // CoinGecko runs the FULL universe on the slow cadence: OKX-covered tokens still
+    // need a spot-volume baseline for the futures-vs-spot manipulation leg.
     const cgDue = !okxActive || ((this._tick - 1) % this.cgEveryN === 0);
-    if (cgDue) {
-      const targetIds = okxActive
-        ? this.universe.allCgIds().filter(id => !covered.has(id))
-        : this.universe.allCgIds();
-      await this.#pollCoinGecko(targetIds, now);
-    }
+    if (cgDue) await this.#pollCoinGecko(this.universe.allCgIds(), now);
   }
 
   async #pollCoinGecko(ids, now) {
@@ -158,7 +155,13 @@ export class PriceMonitor extends EventEmitter {
         }
         const data = await res.json();
         for (const m of data) {
-          if (typeof m.total_volume === 'number') { this.volume24h.set(m.id, m.total_volume); this.spotVol24h.set(m.id, m.total_volume); }
+          const onOkx = this.okxCovered.has(m.id);
+          // Spot baseline always; OKX stays authoritative for price/volume where it covers.
+          if (typeof m.total_volume === 'number') {
+            this.spotVol24h.set(m.id, m.total_volume);
+            if (!onOkx) this.volume24h.set(m.id, m.total_volume);
+          }
+          if (onOkx) continue;
           const pct = m.price_change_percentage_24h_in_currency ?? m.price_change_percentage_24h;
           if (typeof pct === 'number') this.priceChange24h.set(m.id, pct);
           if (typeof m.current_price === 'number') this.#applyPrice(m.id, m.current_price, now);

@@ -39,3 +39,7 @@ relay/.fly/
 /DEMO.md
 /identity/REGISTRATION.md
 /identity/services-cli.json
+
+# Demo video project (Remotion) — build artifacts
+video/node_modules/
+video/out/

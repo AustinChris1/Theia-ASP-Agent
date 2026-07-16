@@ -290,6 +290,38 @@ export class TeamWalletDiscovery extends EventEmitter {
     return { symbol: want, concentration, tokens };
   }
 
+  // On-demand discovery for ANY token with an ETH/BSC contract (discoverAll only
+  // covers favored tokens). Returns the holdersForSymbol shape, or null if the
+  // token has no scannable contract.
+  async discoverSymbol(symbol) {
+    const want = String(symbol || '').toUpperCase();
+    if (!want) return null;
+    const cached = this.holdersForSymbol(want);
+    if (cached) return cached;
+
+    let cand = null;
+    for (const cgId of this.universe.allCgIds()) {
+      const t = this.universe.lookupByCgId(cgId);
+      if (!t || String(t.symbol || '').toUpperCase() !== want) continue;
+      for (const chain of ['ethereum', 'bsc']) {
+        const info = t.chains?.[chain];
+        if (!info?.address) continue;
+        cand = { chain, tokenAddress: info.address.toLowerCase(), symbol: t.symbol, cgId };
+        break;
+      }
+      if (cand) break;
+    }
+    if (!cand) return null;
+
+    try {
+      await this.#discoverOne(cand);
+    } catch (err) {
+      if (this.verbose) console.warn(`[team-wallets] on-demand ${want} failed: ${err.message}`);
+      return null;
+    }
+    return this.holdersForSymbol(want);
+  }
+
   async discoverAll({ maxTokens = 100 } = {}) {
     const candidates = [];
     for (const cgId of this.universe.allCgIds()) {
