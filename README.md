@@ -1,9 +1,9 @@
-# Theia — crypto intelligence for agents, on OKX.AI
+# Theia: crypto intelligence for agents, on OKX.AI
 
 **Theia is an Agent Service Provider (ASP) on OKX.AI.** Agents can trade, but they
 trade blind. Theia sells the intelligence: is this token being manipulated, are
 insiders distributing, where is exchange flow heading, where are the liquidations, and
-what is the confluence-scored trade plan — priced per call, paid in USDT on X Layer.
+what is the confluence-scored trade plan. Priced per call, paid in USDT on X Layer.
 
 - **Live on OKX.AI:** agent `#6004` (X Layer, chainId 196)
 - **Endpoint:** `https://theia-asp.onrender.com`
@@ -11,6 +11,44 @@ what is the confluence-scored trade plan — priced per call, paid in USDT on X 
 - **Deterministic + auditable:** an LLM may narrate output, it never decides a trade
 
 ---
+
+## Why I built this
+
+I did the work. Multi-timeframe technical analysis, structure, confluence. The chart
+said long, so I went long.
+
+I got liquidated.
+
+What stung was not being wrong. It was finding out afterwards *why* I was wrong. The
+float was concentrated in a handful of wallets. The volume that looked like conviction
+was largely wash. Supply had already been moving into exchange custody while I was
+drawing levels. None of that was in the chart. By the time it reached the chart, I was
+exit liquidity.
+
+That was the lesson: **technical analysis answers what price is doing. It cannot
+answer who is doing it.** The chart is downstream. It is the last place the move shows
+up, and it is the only place most people are looking.
+
+So I built the legs I was missing, and every skill here is one of the questions I
+could not answer that day:
+
+| The question TA could not answer | The skill |
+|---|---|
+| Is this volume even real, or is it wash? | `theia_manipulation_check` |
+| Who actually holds the float? | `theia_insider_scan` |
+| Is supply quietly moving into exchange custody? | `theia_cex_flow` |
+| How cornered is the float across exchanges? | `theia_cex_holdings` |
+| Where exactly does my leverage die? | `theia_liqmap` |
+| Given all of the above, what is the honest read? | `theia_signal` |
+
+Then agents started trading. They inherited the same blindness I had, except they will
+act on it in milliseconds, around the clock, with no instinct that something feels off.
+An agent with a wallet and no visibility into float, flow, or manipulation is not a
+trader. It is exit liquidity with an API key.
+
+Theia is the layer I wish I had, sold to the agents that need it most. It is
+deterministic on purpose: it will tell you conviction is **LOW** rather than
+manufacture a number, because the confident-sounding call is exactly what cost me.
 
 ## What it offers
 
@@ -25,12 +63,12 @@ what is the confluence-scored trade plan — priced per call, paid in USDT on X 
 | `theia_liqmap` | Leverage-liquidation clusters above/below price | 0.05 USDT |
 | `theia_cex_holdings` | Cornered float: cold-wallet concentration by token or exchange | 0.02 USDT |
 
-**One premium escrow service (A2A):** *Theia Deep Desk* — a full multi-token
+**One premium escrow service (A2A):** *Theia Deep Desk*, a full multi-token
 manipulation + insider + liquidation + flow audit, delivered as a structured report,
 escrow-backed, released on your sign-off.
 
 **Plus a verifiable-alpha ledger:** Theia resolves every signal it fires to a real
-outcome and hashes it into a Merkle root anchored on X Layer — the win-rate is
+outcome and hashes it into a Merkle root anchored on X Layer. The win-rate is
 auditable on-chain, not claimed.
 
 ## Try it
@@ -51,7 +89,7 @@ curl -X POST https://theia-asp.onrender.com/skills/theia_signal \
 ```
 
 The same six skills are exposed as **MCP tools** over Streamable HTTP at
-`POST /mcp` (stateless — `initialize`, then `tools/list`).
+`POST /mcp` (stateless: `initialize`, then `tools/list`).
 
 ## How it works
 

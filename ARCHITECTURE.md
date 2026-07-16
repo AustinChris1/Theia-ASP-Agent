@@ -1,4 +1,4 @@
-# Theia — Architecture
+# Theia: Architecture
 
 Theia is a deterministic crypto-intelligence engine exposed as an **Agent Service
 Provider (ASP) on OKX.AI**. Other agents pay Theia to answer the questions that move
@@ -31,31 +31,28 @@ and the skills are exposed both as **x402 HTTP endpoints** and as **MCP tools**.
 
 ## 2. System context
 
-```
-        ┌──────────────────────────────────────────────────────────┐
-        │                     Caller (another agent)                │
-        │        x402 pay-per-call   ·   or MCP tool call           │
-        └───────────────┬───────────────────────────┬──────────────┘
-                        │ POST /skills/<name>        │ POST /mcp
-                        ▼                            ▼
-        ┌──────────────────────────────────────────────────────────┐
-        │                    Theia ASP (server.js)                  │
-        │   x402 gate · MCP server · manifest/health/reputation     │
-        └───────────────┬──────────────────────────────────────────┘
-                        │ engine.analyze(symbol)
-                        ▼
-        ┌──────────────────────────────────────────────────────────┐
-        │           Intelligence engine (src/, imported)            │
-        │   conductor → TA · funding/OI · liquidation · insider     │
-        └──────┬───────────────────┬────────────────────┬──────────┘
-               │ OKX v5            │ on-chain RPC        │ Neon/JSON
-               ▼                   ▼                     ▼
-        ┌────────────┐    ┌──────────────────┐   ┌───────────────┐
-        │  OKX v5    │    │ ETH / BSC nodes  │   │ persistence   │
-        │ market API │    │ (insider, CEX)   │   │ (kv + journal)│
-        └────────────┘    └──────────────────┘   └───────────────┘
+```mermaid
+flowchart TD
+    caller["Caller (another agent)<br/>x402 pay-per-call or MCP tool call"]
 
-  Settlement: USDT on X Layer (196)   ·   Identity: ERC-8004 agent #6004
+    caller -->|"POST /skills/&lt;name&gt;"| asp
+    caller -->|"POST /mcp"| asp
+
+    asp["<b>Theia ASP</b> (server.js)<br/>x402 gate · MCP server · manifest / health / reputation"]
+    asp -->|"engine.analyze(symbol)"| engine
+
+    engine["<b>Intelligence engine</b> (src/, imported)<br/>conductor → TA · funding/OI · liquidation · insider"]
+
+    engine -->|"OKX v5"| okx["OKX v5<br/>market API"]
+    engine -->|"on-chain RPC"| chains["ETH / BSC nodes<br/>(insider, CEX)"]
+    engine -->|"Neon / JSON"| store["persistence<br/>(kv + journal)"]
+
+    asp -.->|"settles USDT"| xlayer["X Layer 196<br/>settlement + ERC-8004 identity #6004"]
+
+    classDef ext fill:#0b1626,stroke:#22d3ee,color:#e6f1ff
+    classDef core fill:#123049,stroke:#22d3ee,color:#e6f1ff
+    class asp,engine core
+    class okx,chains,store,xlayer,caller ext
 ```
 
 ## 3. Components
@@ -92,25 +89,32 @@ report, released on sign-off.
 
 ## 5. The signal path (data flow)
 
-```
-POST /skills/theia_signal {"token":"BTC"}
-      │
-      ▼  x402 gate (off | declare | facilitator)
-skills/signal.js  ── validate input, shape response
-      │  engine.analyze("BTC")
-      ▼
-conductor.evaluateForAnalysis({ symbol, allowFetch:true })
-      │
-      ├─ prices          OKX SWAP tickers        (price, 24h vol)
-      ├─ ta              OKX candles             (multi-TF RSI/MACD/BB/ATR/SMC)
-      ├─ funding         OKX funding + OI        (positioning)
-      ├─ liq-clusters    OKX order book          (heatmap walls)
-      ├─ liq-heatmap     Coinalyze (neutral)     (liquidation clusters)
-      ├─ insiders        Moralis / on-chain      (holder distribution)
-      └─ cex-holdings    ETH/BSC RPC             (cornered float)
-      │
-      ▼
-scored read: { side, tier, confidence, reasons[], tradePlan{entry,SL,TP1-3,lev} }
+```mermaid
+flowchart TD
+    req["POST /skills/theia_signal<br/>{ token: BTC }"] --> gate
+
+    gate{"x402 gate<br/>off / declare / facilitator"}
+    gate -->|"paid or free mode"| adapter["skills/signal.js<br/>validate input, shape response"]
+    gate -->|"unpaid"| challenge["402 Payment Required"]
+
+    adapter -->|"engine.analyze('BTC')"| cond["conductor.evaluateForAnalysis<br/>{ symbol, allowFetch: true }"]
+
+    cond --> prices["<b>prices</b><br/>OKX SWAP tickers<br/><i>price, 24h vol</i>"]
+    cond --> ta["<b>ta</b><br/>OKX candles<br/><i>multi-TF RSI/MACD/BB/ATR/SMC</i>"]
+    cond --> funding["<b>funding</b><br/>OKX funding + OI<br/><i>positioning</i>"]
+    cond --> clusters["<b>liq-clusters</b><br/>OKX order book<br/><i>heatmap walls</i>"]
+    cond --> heatmap["<b>liq-heatmap</b><br/>Coinalyze (neutral)<br/><i>liquidation clusters</i>"]
+    cond --> insiders["<b>insiders</b><br/>Moralis / on-chain<br/><i>holder distribution</i>"]
+    cond --> cex["<b>cex-holdings</b><br/>ETH/BSC RPC<br/><i>cornered float</i>"]
+
+    prices & ta & funding & clusters & heatmap & insiders & cex --> scored
+
+    scored["<b>scored read</b><br/>{ side, tier, confidence, reasons[],<br/>tradePlan{ entry, SL, TP1-3, lev } }"]
+
+    classDef leg fill:#0b1626,stroke:#173352,color:#e6f1ff
+    classDef core fill:#123049,stroke:#22d3ee,color:#e6f1ff
+    class prices,ta,funding,clusters,heatmap,insiders,cex leg
+    class cond,scored core
 ```
 
 OKX is the exchange source throughout. Coinalyze and CoinGecko are neutral
@@ -121,16 +125,32 @@ discovery. All external fetches carry an `AbortSignal` timeout.
 
 A2MCP is fully automatic pay-per-call using the x402 V2 standard on X Layer.
 
-```
-1. Caller  ─ POST /skills/theia_signal ─────────────▶ Theia
-2. Theia   ─ 402 Payment Required ──────────────────▶ Caller
-              PAYMENT-REQUIRED: base64 { x402Version, accepts:[{ scheme:"exact",
-              network:"eip155:196", asset:<USDT>, payTo, maxAmountRequired, decimals }] }
-3. Caller  ─ pays via OKX Agentic Wallet, replays ──▶ Theia
-              PAYMENT-SIGNATURE: <signed authorization>
-4. Theia   ─ verify + settle via facilitator ───────▶ 200 OK
-              PAYMENT-RESPONSE: base64 { success, transaction, payer }
-              + the skill JSON
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Caller (agent)
+    participant W as OKX Agentic Wallet
+    participant T as Theia ASP
+    participant F as x402 Facilitator
+    participant X as X Layer 196
+
+    C->>T: POST /skills/theia_signal
+    T-->>C: 402 Payment Required
+    Note over T,C: PAYMENT-REQUIRED: base64 {<br/>x402Version, accepts:[{ scheme:"exact",<br/>network:"eip155:196", asset:USDT,<br/>payTo, maxAmountRequired, decimals }] }
+
+    C->>W: request signed authorization
+    W-->>C: signed payload (key stays in TEE)
+
+    C->>T: replay POST + PAYMENT-SIGNATURE
+    T->>F: /verify
+    F-->>T: valid
+    T->>F: /settle
+    F->>X: transfer USDT to payTo
+    X-->>F: tx hash
+    F-->>T: settled
+
+    T-->>C: 200 OK + skill JSON
+    Note over T,C: PAYMENT-RESPONSE: base64 {<br/>success, transaction, payer }
 ```
 
 The seller middleware runs in three modes: `off` (free dev/demo), `declare` (returns
@@ -146,16 +166,33 @@ auditable on-chain, not claimed. Only real resolved outcomes are published.
 
 ## 8. Deployment topology
 
-```
-   Render (Singapore)                 X Layer (196)              Caller's runtime
- ┌─────────────────────┐          ┌──────────────────┐        ┌──────────────────┐
- │  Theia ASP          │  x402    │  USDT settlement │        │  Agentic Wallet  │
- │  node server.js     │◀────────▶│  ERC-8004 #6004  │        │  (onchainos TEE) │
- │  reaches OKX direct │          └──────────────────┘        └──────────────────┘
- └─────────┬───────────┘
-           │ OKX v5 (Singapore egress is not geo-blocked)
-           ▼
-      OKX market API
+```mermaid
+flowchart LR
+    subgraph render["Render (Singapore)"]
+        asp["<b>Theia ASP</b><br/>node server.js<br/>reaches OKX direct"]
+    end
+
+    subgraph chain["X Layer (196)"]
+        settle["USDT settlement<br/>ERC-8004 #6004"]
+    end
+
+    subgraph runtime["Caller's runtime"]
+        wallet["Agentic Wallet<br/>(onchainos TEE)"]
+    end
+
+    okx["OKX v5<br/>market API"]
+
+    asp <-->|"x402"| settle
+    wallet -->|"signs payment"| asp
+    asp -->|"Singapore egress is not geo-blocked"| okx
+
+    relay["relay/ (optional)<br/>Fly.io proxy pinned to Singapore"]
+    relay -.->|"only for geo-blocked hosts"| okx
+
+    classDef box fill:#0b1626,stroke:#22d3ee,color:#e6f1ff
+    classDef opt fill:#0a1422,stroke:#48607a,color:#7d97b0
+    class asp,settle,wallet,okx box
+    class relay opt
 ```
 
 The ASP is hosted in a region OKX allows (Singapore), so it reaches OKX directly with
