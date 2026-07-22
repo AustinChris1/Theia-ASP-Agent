@@ -1,5 +1,6 @@
 
 
+import { createHmac } from 'node:crypto';
 import { config, activeAsset } from '../config.js';
 
 const X402_VERSION = 1;
@@ -56,8 +57,36 @@ function send402(res, payload, extra = {}) {
   res.json({ x402Version: X402_VERSION, error: 'payment_required', ...extra, accepts: payload.accepts, resource: payload.resource });
 }
 
+// OKX OK-ACCESS signing: Base64(HMAC-SHA256(ts + METHOD + requestPath + body, secret)).
+function okxAuthHeaders({ method, requestPath, body }) {
+  const a = config.x402.facilitatorAuth;
+  if (!a?.apiKey || !a?.secretKey || !a?.passphrase) return {};
+  const ts = new Date().toISOString();
+  const sign = createHmac('sha256', a.secretKey)
+    .update(ts + method.toUpperCase() + requestPath + (body || ''))
+    .digest('base64');
+  const h = {
+    'OK-ACCESS-KEY': a.apiKey,
+    'OK-ACCESS-SIGN': sign,
+    'OK-ACCESS-TIMESTAMP': ts,
+    'OK-ACCESS-PASSPHRASE': a.passphrase,
+  };
+  if (a.projectId) h['OK-ACCESS-PROJECT'] = a.projectId;
+  return h;
+}
+
+// Body must be byte-identical between signing and sending, and requestPath is path-only.
+async function facilitatorPost(origin, requestPath, bodyObj, timeoutMs) {
+  const body = JSON.stringify(bodyObj);
+  const headers = { 'content-type': 'application/json', ...okxAuthHeaders({ method: 'POST', requestPath, body }) };
+  const res = await fetch(`${origin}${requestPath}`, { method: 'POST', headers, body, signal: AbortSignal.timeout(timeoutMs) });
+  const json = await res.json().catch(() => ({}));
+  return { res, json };
+}
+
 export async function settleViaFacilitator({ paymentB64, payload }) {
-  const base = config.x402.facilitatorUrl.replace(/\/$/, '');
+  const url = new URL(config.x402.facilitatorUrl);
+  const basePath = url.pathname.replace(/\/$/, '');
   let paymentPayload;
   try {
     paymentPayload = JSON.parse(Buffer.from(paymentB64, 'base64').toString('utf8'));
@@ -65,23 +94,13 @@ export async function settleViaFacilitator({ paymentB64, payload }) {
     paymentPayload = { raw: paymentB64 };
   }
   const requirements = payload.accepts[0];
-  const headers = { 'content-type': 'application/json' };
+  const reqBody = { x402Version: X402_VERSION, paymentPayload, paymentRequirements: requirements };
   try {
-    const vr = await fetch(`${base}/verify`, {
-      method: 'POST', headers,
-      body: JSON.stringify({ x402Version: X402_VERSION, paymentPayload, paymentRequirements: requirements }),
-      signal: AbortSignal.timeout(8000),
-    });
-    const vj = await vr.json().catch(() => ({}));
-    if (!vr.ok || vj.isValid === false) return { ok: false, reason: vj.invalidReason || vj.reason || `verify failed (${vr.status})` };
+    const { res: vr, json: vj } = await facilitatorPost(url.origin, `${basePath}/verify`, reqBody, 8000);
+    if (!vr.ok || vj.isValid === false) return { ok: false, reason: vj.invalidReason || vj.reason || vj.msg || `verify failed (${vr.status})` };
 
-    const sr = await fetch(`${base}/settle`, {
-      method: 'POST', headers,
-      body: JSON.stringify({ x402Version: X402_VERSION, paymentPayload, paymentRequirements: requirements }),
-      signal: AbortSignal.timeout(12000),
-    });
-    const sj = await sr.json().catch(() => ({}));
-    if (!sr.ok || sj.success === false) return { ok: false, reason: sj.errorReason || sj.reason || `settle failed (${sr.status})` };
+    const { res: sr, json: sj } = await facilitatorPost(url.origin, `${basePath}/settle`, reqBody, 12000);
+    if (!sr.ok || sj.success === false) return { ok: false, reason: sj.errorReason || sj.reason || sj.msg || `settle failed (${sr.status})` };
     return { ok: true, settlement: sj };
   } catch (e) {
     return { ok: false, reason: `facilitator error: ${e.message}` };
@@ -130,6 +149,7 @@ export function paymentInfo() {
     settlementAsset: { symbol: asset.symbol, address: asset.address, decimals: asset.decimals },
     payTo: config.x402.payTo,
     facilitator: config.x402.facilitatorUrl || null,
+    facilitatorAuth: !!config.x402.facilitatorAuth?.apiKey,
   };
 }
 

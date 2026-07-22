@@ -64,6 +64,12 @@ export const config = {
     defaultAsset: str('X402_DEFAULT_ASSET', 'USDT'),
 
     facilitatorUrl: str('X402_FACILITATOR_URL', null),
+    facilitatorAuth: {
+      apiKey: str('X402_FACILITATOR_API_KEY', null),
+      secretKey: str('X402_FACILITATOR_API_SECRET', null),
+      passphrase: str('X402_FACILITATOR_API_PASSPHRASE', null),
+      projectId: str('X402_FACILITATOR_PROJECT_ID', null),
+    },
     prices: SKILL_PRICES_USDT,
     enforce: bool('X402_ENFORCE', false),
   },
