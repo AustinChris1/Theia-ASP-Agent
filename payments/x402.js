@@ -96,12 +96,18 @@ export async function settleViaFacilitator({ paymentB64, payload }) {
   const requirements = payload.accepts[0];
   const reqBody = { x402Version: X402_VERSION, paymentPayload, paymentRequirements: requirements };
   try {
+    // OKX wraps results in {code, msg, data}. Fail closed: only an explicit
+    // code 0 + data.isValid / data.success passes; anything else rejects.
     const { res: vr, json: vj } = await facilitatorPost(url.origin, `${basePath}/verify`, reqBody, 8000);
-    if (!vr.ok || vj.isValid === false) return { ok: false, reason: vj.invalidReason || vj.reason || vj.msg || `verify failed (${vr.status})` };
+    const vd = vj?.data ?? {};
+    if (!vr.ok || String(vj?.code ?? '') !== '0') return { ok: false, reason: vj?.msg || vd.invalidMessage || `verify failed (${vr.status})` };
+    if (vd.isValid !== true) return { ok: false, reason: vd.invalidReason || vd.invalidMessage || 'payment not valid' };
 
     const { res: sr, json: sj } = await facilitatorPost(url.origin, `${basePath}/settle`, reqBody, 12000);
-    if (!sr.ok || sj.success === false) return { ok: false, reason: sj.errorReason || sj.reason || sj.msg || `settle failed (${sr.status})` };
-    return { ok: true, settlement: sj };
+    const sd = sj?.data ?? {};
+    if (!sr.ok || String(sj?.code ?? '') !== '0') return { ok: false, reason: sj?.msg || sd.errorMessage || `settle failed (${sr.status})` };
+    if (sd.success !== true) return { ok: false, reason: sd.errorReason || sd.errorMessage || 'settlement failed' };
+    return { ok: true, settlement: sd };
   } catch (e) {
     return { ok: false, reason: `facilitator error: ${e.message}` };
   }

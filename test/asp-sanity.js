@@ -198,9 +198,12 @@ eq(x402.x402Mode(), 'declare', 'mode=declare when enforce + no facilitator');
 group('x402 facilitator (mocked)');
 {
   const realFetch = globalThis.fetch;
+  // OKX uniform envelope {code, msg, data}; validity is at data.isValid / data.success.
   globalThis.fetch = async (url) => ({
     ok: true,
-    json: async () => (String(url).endsWith('/verify') ? { isValid: true } : { success: true, transaction: '0xTX', payer: '0xBuyer' }),
+    json: async () => (String(url).endsWith('/verify')
+      ? { code: '0', msg: 'success', data: { isValid: true, payer: '0xBuyer' } }
+      : { code: '0', msg: 'success', data: { success: true, transaction: '0xTX', payer: '0xBuyer', status: 'success' } }),
   });
   config.x402.enforce = true; config.x402.facilitatorUrl = 'https://facilitator.test';
   try {
@@ -211,10 +214,16 @@ group('x402 facilitator (mocked)');
     ok(nexted, 'facilitator success calls next (paid)');
     ok(typeof res.headers['PAYMENT-RESPONSE'] === 'string', 'facilitator success sets PAYMENT-RESPONSE');
 
-    globalThis.fetch = async () => ({ ok: true, json: async () => ({ isValid: false, invalidReason: 'bad_sig' }) });
+    globalThis.fetch = async () => ({ ok: true, json: async () => ({ code: '0', msg: 'success', data: { isValid: false, invalidReason: 'bad_sig' } }) });
     const res2 = mkRes(); let nexted2 = false;
     await gate(mkReq({ 'PAYMENT-SIGNATURE': 'ZmFrZQ==' }), res2, () => { nexted2 = true; });
     ok(!nexted2 && res2.statusCode === 402 && res2.body.reason === 'bad_sig', 'facilitator verify-fail returns 402 with reason');
+
+    // Fail closed: an unrecognized/garbage envelope (no data.isValid) must NOT pass.
+    globalThis.fetch = async () => ({ ok: true, json: async () => ({ code: '50011', msg: 'Invalid Sign' }) });
+    const res3 = mkRes(); let nexted3 = false;
+    await gate(mkReq({ 'PAYMENT-SIGNATURE': 'ZmFrZQ==' }), res3, () => { nexted3 = true; });
+    ok(!nexted3 && res3.statusCode === 402, 'facilitator rejects envelope without data.isValid (fail closed)');
   } finally {
     globalThis.fetch = realFetch;
     config.x402.enforce = false; config.x402.facilitatorUrl = null;
