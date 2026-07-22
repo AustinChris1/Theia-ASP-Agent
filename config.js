@@ -65,10 +65,10 @@ export const config = {
 
     facilitatorUrl: str('X402_FACILITATOR_URL', null),
     facilitatorAuth: {
-      apiKey: str('X402_FACILITATOR_API_KEY', null),
-      secretKey: str('X402_FACILITATOR_API_SECRET', null),
-      passphrase: str('X402_FACILITATOR_API_PASSPHRASE', null),
-      projectId: str('X402_FACILITATOR_PROJECT_ID', null),
+      apiKey: str('X402_FACILITATOR_API_KEY') || str('OKX_API_KEY', null),
+      secretKey: str('X402_FACILITATOR_API_SECRET') || str('OKX_SECRET_KEY', null),
+      passphrase: str('X402_FACILITATOR_API_PASSPHRASE') || str('OKX_PASSPHRASE', null),
+      projectId: str('X402_FACILITATOR_PROJECT_ID') || str('OKX_PROJECT_ID', null),
     },
     prices: SKILL_PRICES_USDT,
     enforce: bool('X402_ENFORCE', false),
