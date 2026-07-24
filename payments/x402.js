@@ -35,13 +35,11 @@ export function buildPaymentRequired({ resource, priceUsdt, description }) {
     maxTimeoutSeconds: 120,
     asset: asset.address,
     decimals: asset.decimals,
+    // Exact scheme: extra is the token EIP-712 domain only. Extra fields here can
+    // fail the facilitator's paymentRequirements compare (param_mismatch).
     extra: {
       name: asset.eip712Name,
       version: asset.eip712Version,
-      assetSymbol: asset.symbol,
-      chainId: config.x402.chainId,
-      humanAmount: priceUsdt,
-      decimals: asset.decimals,
     },
   }];
   return { x402Version: X402_VERSION, resource, accepts };
@@ -100,8 +98,14 @@ export async function settleViaFacilitator({ paymentB64, payload }) {
     // code 0 + data.isValid / data.success passes; anything else rejects.
     const { res: vr, json: vj } = await facilitatorPost(url.origin, `${basePath}/verify`, reqBody, 8000);
     const vd = vj?.data ?? {};
-    if (!vr.ok || String(vj?.code ?? '') !== '0') return { ok: false, reason: vj?.msg || vd.invalidMessage || `verify failed (${vr.status})` };
-    if (vd.isValid !== true) return { ok: false, reason: vd.invalidReason || vd.invalidMessage || 'payment not valid' };
+    if (!vr.ok || String(vj?.code ?? '') !== '0') {
+      console.warn(`[x402] verify envelope rejected: status=${vr.status} code=${vj?.code} msg=${vj?.msg} data=${JSON.stringify(vd)}`);
+      return { ok: false, reason: vj?.msg || vd.invalidMessage || `verify failed (${vr.status})` };
+    }
+    if (vd.isValid !== true) {
+      console.warn(`[x402] verify invalid: reason=${vd.invalidReason} msg=${vd.invalidMessage} data=${JSON.stringify(vd)}`);
+      return { ok: false, reason: vd.invalidReason || vd.invalidMessage || 'payment not valid' };
+    }
 
     const { res: sr, json: sj } = await facilitatorPost(url.origin, `${basePath}/settle`, reqBody, 12000);
     const sd = sj?.data ?? {};

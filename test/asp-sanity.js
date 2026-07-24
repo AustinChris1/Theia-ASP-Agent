@@ -158,7 +158,10 @@ group('x402 challenge shape');
   eq(a.maxAmountRequired, '100000', 'atomic amount');
   eq(a.payTo, process.env.X402_PAY_TO, 'payTo');
   eq(a.asset, process.env.X402_ASSET_USDT_ADDRESS, 'asset address');
-  ok(a.extra && a.extra.chainId === 196, 'extra carries chainId');
+  // Exact scheme: extra is the token EIP-712 domain only (name + version), or the
+  // facilitator returns param_mismatch on the paymentRequirements compare.
+  eq(Object.keys(a.extra).sort().join(','), 'name,version', 'extra is EIP-712 domain only');
+  eq(a.extra.name, 'USD₮0', 'extra.name matches on-chain USD0 domain');
 }
 
 group('x402 gate modes');

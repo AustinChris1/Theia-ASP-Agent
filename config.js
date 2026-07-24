@@ -57,7 +57,9 @@ export const config = {
         decimals: num('X402_ASSET_USDT_DECIMALS', 6),
         symbol: 'USDT',
         name: 'Tether USD',
-        eip712Name: str('X402_ASSET_USDT_EIP712_NAME', 'USDT'),
+        // X Layer USDT (0x779ded...) is Tether's USD₮0; its on-chain EIP-712
+        // domain name is "USD₮0", not "USDT". Signing the wrong domain = param_mismatch.
+        eip712Name: str('X402_ASSET_USDT_EIP712_NAME', 'USD₮0'),
         eip712Version: str('X402_ASSET_USDT_EIP712_VERSION', '1'),
       },
     },
